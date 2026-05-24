@@ -1,0 +1,68 @@
+"use client";
+
+import { calculateTotals, formatMoney } from "@/lib/invoice-utils";
+import { useInvoiceStore } from "@/store/invoice-store";
+
+export function InvoiceSummary() {
+  const invoice = useInvoiceStore((state) => state.invoice);
+  const updateInvoice = useInvoiceStore((state) => state.updateInvoice);
+  const totals = calculateTotals(invoice);
+  const currency = invoice.settings.currency;
+
+  return (
+    <>
+      <section className="flex justify-end px-4 pb-5 sm:px-10">
+        <div className="w-full sm:w-[280px]">
+          <SummaryRow label="Subtotal" value={formatMoney(totals.subtotal, currency)} />
+          <EditableSummaryRow label="Discount" value={invoice.discount} onChange={(value) => updateInvoice({ discount: value })} />
+          <EditableSummaryRow label="VAT / Tax %" value={invoice.taxRate} onChange={(value) => updateInvoice({ taxRate: value })} />
+          <div className="grid grid-cols-[1fr_120px] items-center border border-t-0 border-[#ddd] bg-zinc-50 px-3.5 py-2 text-[13px] font-bold">
+            <span>Grand Total</span>
+            <span className="text-right">{formatMoney(totals.grandTotal, currency)}</span>
+          </div>
+          <EditableSummaryRow label="Advance" value={invoice.advance} onChange={(value) => updateInvoice({ advance: value })} />
+        </div>
+      </section>
+
+      <section className="flex justify-end px-4 pb-7 sm:px-10">
+        <div className="flex w-full min-w-0 items-center justify-end gap-3 rounded-full border-2 border-[#1a1a1a] px-5 py-2.5 font-sans text-[15px] font-extrabold sm:w-auto sm:min-w-60 sm:px-9">
+          <span>Remaining:</span>
+          <span className="text-[#e01b24]">{formatMoney(totals.remaining, currency)}</span>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[1fr_120px] items-center border border-[#ddd] px-3.5 py-2 text-[13px]">
+      <span className="font-semibold text-zinc-600">{label}</span>
+      <span className="text-right font-semibold">{value}</span>
+    </div>
+  );
+}
+
+function EditableSummaryRow({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="grid grid-cols-[1fr_120px] items-center border border-t-0 border-[#ddd] px-3.5 py-2 text-[13px]">
+      <span className="font-semibold text-zinc-600">{label}</span>
+      <input
+        className="w-full rounded bg-transparent text-right font-semibold outline-none focus:bg-[#fff8f8] focus:outline focus:outline-1 focus:outline-[#e01b24]"
+        type="number"
+        min="0"
+        step="0.01"
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+    </label>
+  );
+}

@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+.invoice-paper {
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.pdf-export-wrapper {
+  position: fixed;
+  inset: 0 auto auto 0;
+  width: 210mm;
+  height: 297mm;
+  overflow: hidden;
+  background: #ffffff;
+  pointer-events: none;
+  z-index: 2147483647;
+}
+
+.pdf-export-paper {
+  width: 210mm !important;
+  max-width: none !important;
+  min-height: 297mm !important;
+  height: 297mm !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.pdf-export-paper > .relative.z-10 {
+  min-height: 297mm !important;
+}
+
+.pdf-export-paper header > div:first-child {
+  min-height: 10rem !important;
+  padding: 1.5rem 2.5rem !important;
+}
+
+.pdf-export-paper header > div:first-child > div {
+  flex-direction: row !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 0 !important;
+}
+
+.pdf-export-paper header h1 {
+  margin-top: 8rem !important;
+  font-size: 42px !important;
+}
+
+.pdf-export-paper header img {
+  width: 300px !important;
+}
+
+.pdf-export-paper header > div:nth-child(2),
+.pdf-export-paper section,
+.pdf-export-paper footer {
+  padding-left: 2.5rem !important;
+  padding-right: 2.5rem !important;
+}
+
+.pdf-export-paper table {
+  min-width: 0 !important;
+}
+
+.pdf-export-paper footer {
+  padding-bottom: 9rem !important;
+}
+
+.pdf-export-paper footer > div {
+  grid-template-columns: 1fr 240px !important;
+}
+
+.pdf-export-paper footer > div > div {
+  padding-right: 0 !important;
+}
+
+@page {
+  size: A4;
+  margin: 0;
+}
+
+@media print {
+  html,
+  body {
+    width: 210mm;
+    height: 297mm;
+    margin: 0 !important;
+    background: #ffffff !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  #invoice-paper,
+  #invoice-paper * {
+    visibility: visible;
+  }
+
+  #invoice-paper {
+    position: fixed;
+    inset: 0;
+    width: 210mm !important;
+    height: 297mm !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    overflow: hidden !important;
+  }
+}
