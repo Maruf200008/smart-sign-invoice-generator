@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import smartSignLogo from "@/assets/smart_sign_logo.png";
 import { useInvoiceStore } from "@/store/invoice-store";
 import type { InvoiceData } from "@/types/invoice";
+import Image from "next/image";
 
 export function InvoiceHeader() {
   const invoice = useInvoiceStore((state) => state.invoice);
@@ -31,8 +31,17 @@ export function InvoiceHeader() {
             />
 
             <div className="mt-3 grid gap-1.5 sm:w-auto">
-              <MetaField label="SL No" value={invoice.customer.invoiceNumber} onChange={(value) => updateCustomer("invoiceNumber", value)} />
-              <MetaField label="Date" type="date" value={invoice.customer.date} onChange={(value) => updateCustomer("date", value)} />
+              <MetaField
+                label="SL No"
+                value={invoice.customer.invoiceNumber}
+                onChange={(value) => updateCustomer("invoiceNumber", value)}
+              />
+              <MetaField
+                label="Date"
+                type="date"
+                value={invoice.customer.date}
+                onChange={(value) => updateCustomer("date", value)}
+              />
             </div>
           </div>
         </div>
@@ -42,6 +51,7 @@ export function InvoiceHeader() {
         <span className="min-w-7 text-[13px] font-semibold">To:</span>
         <Editable
           className="flex-1 px-1 py-1 text-[13px] outline-none"
+          placeholder="Enter To"
           value={invoice.customer.name}
           onChange={(value) => updateCustomer("name", value)}
         />
@@ -54,7 +64,7 @@ function MetaField({
   label,
   value,
   type = "text",
-  onChange
+  onChange,
 }: {
   label: string;
   value: string;
@@ -63,7 +73,9 @@ function MetaField({
 }) {
   return (
     <label className="flex items-center border-[1.5px] border-[#1a1a1a] bg-white">
-      <span className="min-w-14 border-r-[1.5px] border-[#1a1a1a] px-2.5 py-1 text-xs font-semibold">{label}</span>
+      <span className="min-w-14 border-r-[1.5px] border-[#1a1a1a] px-2.5 py-1 text-xs font-semibold">
+        {label}
+      </span>
       <input
         className="min-w-0 flex-1 border-0 bg-white px-2.5 py-1 text-xs outline-none sm:w-40 sm:flex-none"
         type={type}
@@ -77,15 +89,18 @@ function MetaField({
 function Editable({
   value,
   onChange,
-  className
+  className,
+  placeholder,
 }: {
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  placeholder?: string;
 }) {
   return (
     <input
       className={`border-0 bg-transparent outline-none ${className ?? ""}`}
+      placeholder={placeholder}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     />

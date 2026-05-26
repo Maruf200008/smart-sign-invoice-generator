@@ -4,23 +4,30 @@ import "./globals.css";
 
 const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-inter"
+  variable: "--font-inter",
 });
 
 const notoBengali = Noto_Sans_Bengali({
   subsets: ["bengali"],
-  variable: "--font-noto-bengali"
+  variable: "--font-noto-bengali",
 });
 
 export const metadata: Metadata = {
-  title: "Smart Invoice Generator",
-  description: "Premium A4 invoice generator with live editing, PDF export, print layout, and Bangla support."
+  title: "Smart Sign Invoice ",
+  description:
+    "Premium A4 invoice generator with live editing, PDF export, print layout, and Bangla support.",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({
+  children,
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${notoBengali.variable} font-sans antialiased`}>{children}</body>
+      <body
+        className={`${inter.variable} ${notoBengali.variable} font-sans antialiased`}
+      >
+        {children}
+      </body>
     </html>
   );
 }

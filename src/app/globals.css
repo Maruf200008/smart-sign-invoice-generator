@@ -115,10 +115,24 @@ button {
     height: 297mm;
     margin: 0 !important;
     background: #ffffff !important;
+    overflow: hidden !important;
   }
 
   body * {
     visibility: hidden;
+  }
+
+  main,
+  main > div,
+  main > div > section {
+    min-height: 0 !important;
+    width: 210mm !important;
+    height: 297mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
   }
 
   .no-print {
@@ -134,9 +148,29 @@ button {
     position: fixed;
     inset: 0;
     width: 210mm !important;
+    min-height: 297mm !important;
     height: 297mm !important;
     margin: 0 !important;
+    border-radius: 0 !important;
     box-shadow: none !important;
     overflow: hidden !important;
+  }
+
+  #invoice-paper > .relative.z-10 {
+    min-height: 297mm !important;
+  }
+
+  #invoice-paper > img:last-of-type {
+    width: 62mm !important;
+  }
+
+  #invoice-paper footer {
+    overflow: visible !important;
+    padding-top: 5mm !important;
+    padding-bottom: 24mm !important;
+  }
+
+  #invoice-paper .invoice-remaining-section {
+    padding-bottom: 5mm !important;
   }
 }

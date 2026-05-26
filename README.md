@@ -2,6 +2,17 @@
 
 A production-oriented Next.js invoice generator with a red-black premium A4 invoice template, live editing, local draft persistence, direct print, and PDF export.
 
+## Features
+
+- Smart Sign branded A4 invoice layout with red-black styling and print-safe spacing.
+- Live invoice editing for customer name, SL number, date, item rows, quantity, price, advance, discount, and tax.
+- Default 10-row invoice template with compact table spacing for larger invoices.
+- Drag-and-drop item row reordering, add row, remove row, duplicate invoice, reset draft, and new SL number actions.
+- Automatic subtotal, discount, tax, total, advance, and remaining balance calculation.
+- Browser draft persistence with migration support so unfinished invoices stay saved locally.
+- Bangla-friendly text rendering with Nirmala and Noto Sans Bengali support.
+- Direct print support plus share/copy invoice actions that generate a PDF or clipboard-friendly invoice image.
+
 ## Install
 
 ```bash

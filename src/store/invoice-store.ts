@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { InvoiceData, InvoiceItem } from "@/types/invoice";
 import { createBlankItem, generateInvoiceNumber, uid } from "@/lib/invoice-utils";
-import { sampleInvoice } from "@/lib/sample-invoice";
+import { createSampleInvoice } from "@/lib/sample-invoice";
 
 interface InvoiceStore {
   invoice: InvoiceData;
@@ -12,6 +12,7 @@ interface InvoiceStore {
   updateInvoice: (patch: Partial<InvoiceData>) => void;
   addItem: () => void;
   removeItem: (id: string) => void;
+  reorderItem: (fromIndex: number, toIndex: number) => void;
   updateItem: (id: string, patch: Partial<InvoiceItem>) => void;
   resetDraft: () => void;
   duplicateInvoice: () => void;
@@ -25,7 +26,7 @@ function touch(invoice: InvoiceData): InvoiceData {
 export const useInvoiceStore = create<InvoiceStore>()(
   persist(
     (set, get) => ({
-      invoice: sampleInvoice,
+      invoice: createSampleInvoice(),
       setInvoice: (invoice) => set({ invoice: touch(invoice) }),
       updateInvoice: (patch) =>
         set((state) => ({
@@ -49,6 +50,23 @@ export const useInvoiceStore = create<InvoiceStore>()(
           const items = state.invoice.items.filter((item) => item.id !== id);
           return { invoice: touch({ ...state.invoice, items }) };
         }),
+      reorderItem: (fromIndex, toIndex) =>
+        set((state) => {
+          if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) {
+            return state;
+          }
+
+          const items = [...state.invoice.items];
+          const [item] = items.splice(fromIndex, 1);
+
+          if (!item) {
+            return state;
+          }
+
+          items.splice(Math.min(toIndex, items.length), 0, item);
+
+          return { invoice: touch({ ...state.invoice, items }) };
+        }),
       updateItem: (id, patch) =>
         set((state) => ({
           invoice: touch({
@@ -56,7 +74,15 @@ export const useInvoiceStore = create<InvoiceStore>()(
             items: state.invoice.items.map((item) => (item.id === id ? { ...item, ...patch } : item))
           })
         })),
-      resetDraft: () => set({ invoice: touch({ ...sampleInvoice, customer: { ...sampleInvoice.customer, invoiceNumber: generateInvoiceNumber() } }) }),
+      resetDraft: () => {
+        const invoice = createSampleInvoice();
+        set({
+          invoice: touch({
+            ...invoice,
+            customer: { ...invoice.customer, invoiceNumber: generateInvoiceNumber() }
+          })
+        });
+      },
       duplicateInvoice: () => {
         const invoice = get().invoice;
         set({
@@ -78,7 +104,26 @@ export const useInvoiceStore = create<InvoiceStore>()(
     }),
     {
       name: "smart-invoice-draft",
-      version: 2
+      version: 3,
+      migrate: (persistedState: unknown) => {
+        const state = persistedState as { invoice?: InvoiceData } | undefined;
+
+        if (!state?.invoice) {
+          return { invoice: createSampleInvoice() };
+        }
+
+        if (state.invoice.items.length > 0) {
+          return state;
+        }
+
+        return {
+          ...state,
+          invoice: touch({
+            ...state.invoice,
+            items: Array.from({ length: 10 }, () => createBlankItem())
+          })
+        };
+      }
     }
   )
 );

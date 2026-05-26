@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { Copy, Plus, RotateCcw, Wand2 } from "lucide-react";
 import { ActionButton } from "@/components/controls/ActionButton";
-import { PDFExportButton } from "@/components/controls/PDFExportButton";
+import { ShareInvoiceButton } from "@/components/controls/PDFExportButton";
 import { PrintButton } from "@/components/controls/PrintButton";
 import { InvoicePreview } from "@/components/invoice/InvoicePreview";
 import { useInvoiceStore } from "@/store/invoice-store";
@@ -24,7 +24,7 @@ export function InvoiceDashboard() {
         >
           <ActionButton variant="ghost" icon={<Plus className="size-4" />} onClick={addItem}>Add Row</ActionButton>
           <PrintButton />
-          <PDFExportButton />
+          <ShareInvoiceButton />
           <ActionButton icon={<Wand2 className="size-4" />} onClick={newInvoiceNumber}>New SL</ActionButton>
           <ActionButton icon={<Copy className="size-4" />} onClick={duplicateInvoice}>Duplicate</ActionButton>
           <ActionButton icon={<RotateCcw className="size-4" />} onClick={resetDraft}>Reset</ActionButton>

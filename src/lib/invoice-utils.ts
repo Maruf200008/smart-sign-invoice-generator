@@ -25,7 +25,7 @@ export function createBlankItem(): InvoiceItem {
   return {
     id: uid("item"),
     name: "",
-    quantity: 1,
+    quantity: 0,
     unitPrice: 0
   };
 }
