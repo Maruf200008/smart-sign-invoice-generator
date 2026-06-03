@@ -3,6 +3,7 @@ export type CurrencyCode = "BDT" | "USD" | "EUR" | "GBP" | "INR";
 export type InvoiceStatus = "draft" | "paid" | "unpaid" | "partial";
 
 export type InvoiceTheme = "red-black" | "minimal" | "executive";
+export type InvoiceLanguage = "english" | "bangla";
 
 export interface CompanyInfo {
   name: string;
@@ -24,14 +25,20 @@ export interface CustomerInfo {
 export interface InvoiceItem {
   id: string;
   name: string;
+  width: number;
+  height: number;
+  sqf: number;
   quantity: number;
   unitPrice: number;
+  total: number;
+  totalIsManual: boolean;
 }
 
 export interface InvoiceSettings {
   currency: CurrencyCode;
   status: InvoiceStatus;
   theme: InvoiceTheme;
+  language: InvoiceLanguage;
   darkMode: boolean;
   watermark: string;
 }
@@ -41,7 +48,6 @@ export interface InvoiceData {
   customer: CustomerInfo;
   items: InvoiceItem[];
   advance: number;
-  discount: number;
   taxRate: number;
   notes: string;
   terms: string;
@@ -50,9 +56,16 @@ export interface InvoiceData {
   updatedAt: string;
 }
 
+export interface SavedInvoice {
+  id: string;
+  name: string;
+  savedAt: string;
+  invoice: InvoiceData;
+}
+
 export interface InvoiceTotals {
+  totalSqf: number;
   subtotal: number;
-  discount: number;
   taxable: number;
   tax: number;
   grandTotal: number;

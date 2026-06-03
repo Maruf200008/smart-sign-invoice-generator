@@ -25,32 +25,94 @@ export function createBlankItem(): InvoiceItem {
   return {
     id: uid("item"),
     name: "",
+    width: 0,
+    height: 0,
+    sqf: 0,
     quantity: 0,
-    unitPrice: 0
+    unitPrice: 0,
+    total: 0,
+    totalIsManual: false
   };
 }
 
+export function lineSqf(item: InvoiceItem) {
+  if (item.sqf !== null && item.sqf !== undefined) {
+    return roundToTwo(safePositiveNumber(item.sqf));
+  }
+
+  if (hasPositiveValue(item.width) && hasPositiveValue(item.height)) {
+    return calculateSqf(item.width, item.height) ?? 0;
+  }
+
+  return 0;
+}
+
 export function lineTotal(item: InvoiceItem) {
-  return safeNumber(item.quantity) * safeNumber(item.unitPrice);
+  if (item.totalIsManual) {
+    return roundToTwo(safePositiveNumber(item.total));
+  }
+
+  return calculateLineTotal(item) ?? 0;
+}
+
+export function calculateSqf(width: unknown, height: unknown) {
+  if (!hasPositiveValue(width) || !hasPositiveValue(height)) {
+    return 0;
+  }
+
+  return roundToTwo(safePositiveNumber(width) * safePositiveNumber(height));
+}
+
+export function calculateLineTotal(item: InvoiceItem) {
+  const rate = safePositiveNumber(item.unitPrice);
+
+  if (!rate) {
+    return 0;
+  }
+
+  const sqf = lineSqf(item);
+  const quantity = safePositiveNumber(item.quantity);
+
+  if (sqf && quantity) {
+    return roundToTwo(sqf * quantity * rate);
+  }
+
+  if (quantity) {
+    return roundToTwo(quantity * rate);
+  }
+
+  if (sqf) {
+    return roundToTwo(sqf * rate);
+  }
+
+  return 0;
 }
 
 export function calculateTotals(invoice: InvoiceData): InvoiceTotals {
+  const totalSqf = roundToTwo(
+    invoice.items.reduce((sum, item) => sum + lineSqf(item) * (safePositiveNumber(item.quantity) || 1), 0)
+  );
   const subtotal = invoice.items.reduce((sum, item) => sum + lineTotal(item), 0);
-  const discount = Math.min(safeNumber(invoice.discount), subtotal);
-  const taxable = Math.max(subtotal - discount, 0);
+  const taxable = subtotal;
   const tax = taxable * (safeNumber(invoice.taxRate) / 100);
   const grandTotal = taxable + tax;
   const advance = Math.min(safeNumber(invoice.advance), grandTotal);
 
   return {
+    totalSqf,
     subtotal,
-    discount,
     taxable,
     tax,
     grandTotal,
     advance,
     remaining: Math.max(grandTotal - advance, 0)
   };
+}
+
+export function formatDecimal(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2
+  }).format(Number.isFinite(value) ? value : 0);
 }
 
 export function formatMoney(value: number, currency: CurrencyCode) {
@@ -62,8 +124,40 @@ export function formatMoney(value: number, currency: CurrencyCode) {
 }
 
 export function safeNumber(value: unknown) {
+  if (value === "" || value === null || value === undefined) {
+    return 0;
+  }
+
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+export function safePositiveNumber(value: unknown) {
+  return Math.max(safeNumber(value), 0);
+}
+
+export function roundToTwo(value: number) {
+  return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+}
+
+export function hasPositiveValue(value: unknown) {
+  return safePositiveNumber(value) > 0;
+}
+
+export function parsePositiveInput(value: string) {
+  if (value.trim() === "") {
+    return 0;
+  }
+
+  return safePositiveNumber(value);
+}
+
+export function roundPositiveInput(value: string) {
+  if (value.trim() === "") {
+    return 0;
+  }
+
+  return roundToTwo(safePositiveNumber(value));
 }
 
 export function readFileAsDataUrl(file: File) {

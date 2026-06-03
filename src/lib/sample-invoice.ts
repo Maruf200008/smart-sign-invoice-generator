@@ -21,7 +21,6 @@ export function createSampleInvoice(): InvoiceData {
     },
     items: Array.from({ length: 10 }, () => createBlankItem()),
     advance: 0,
-    discount: 0,
     taxRate: 0,
     notes: "Thank you for your business. ধন্যবাদ।",
     terms:
@@ -31,6 +30,7 @@ export function createSampleInvoice(): InvoiceData {
       currency: "BDT",
       status: "partial",
       theme: "red-black",
+      language: "english",
       darkMode: false,
       watermark: "SMART SIGN"
     },

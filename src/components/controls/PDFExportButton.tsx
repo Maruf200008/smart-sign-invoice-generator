@@ -4,7 +4,8 @@ import bottomSide from "@/assets/bottom_side.svg";
 import smartSignLogo from "@/assets/smart_sign_logo.png";
 import topSide from "@/assets/top_side-01.svg";
 import { ActionButton } from "@/components/controls/ActionButton";
-import { calculateTotals, formatMoney, lineTotal } from "@/lib/invoice-utils";
+import { getInvoiceLabels } from "@/lib/invoice-labels";
+import { calculateTotals, formatDecimal, formatMoney, lineSqf, lineTotal } from "@/lib/invoice-utils";
 import { useInvoiceStore } from "@/store/invoice-store";
 import { Check, Copy, Share2 } from "lucide-react";
 import { useState } from "react";
@@ -203,6 +204,7 @@ export function ShareInvoiceButton() {
     const totals = calculateTotals(invoice);
     const currency = invoice.settings.currency;
     const isCompact = invoice.items.length > 8;
+    const labels = getInvoiceLabels(invoice.settings.language);
 
     ctx.drawImage(topSideImage, 0, 0, 86, 50.6);
     ctx.drawImage(
@@ -214,7 +216,7 @@ export function ShareInvoiceButton() {
     );
     ctx.drawImage(logoImage, 118, 14, 82, 27.4);
 
-    drawText(ctx, "Invoice", PAGE_PADDING_MM, 51, { color: "#e01b24", size: 34, weight: "700" });
+    drawText(ctx, labels.invoice, PAGE_PADDING_MM, 51, { color: "#e01b24", size: 34, weight: "700" });
 
     ctx.strokeStyle = "#1a1a1a";
     ctx.lineWidth = 0.45;
@@ -225,10 +227,10 @@ export function ShareInvoiceButton() {
       drawText(ctx, label, metaX + 2, y + 4.8, { size: 12, weight: "700" });
       drawText(ctx, value || "", metaX + 19, y + 4.8, { size: 12 });
     };
-    drawMeta("SL No", invoice.customer.invoiceNumber, 46);
-    drawMeta("Date", invoice.customer.date, 55);
+    drawMeta(labels.slNo, invoice.customer.invoiceNumber, 46);
+    drawMeta(labels.date, invoice.customer.date, 55);
 
-    drawText(ctx, "To:", PAGE_PADDING_MM, 76, { size: 13, weight: "700" });
+    drawText(ctx, labels.to, PAGE_PADDING_MM, 76, { size: 13, weight: "700" });
     drawText(ctx, invoice.customer.name || "", PAGE_PADDING_MM + 9, 76, { size: 13 });
 
     const tableX = PAGE_PADDING_MM;
@@ -236,23 +238,30 @@ export function ShareInvoiceButton() {
     const rowHeight = isCompact ? Math.max(5.2, Math.min(7.4, 74 / Math.max(invoice.items.length, 1))) : 8.5;
     const tableFontSize = isCompact ? 10.2 : 12.4;
     const headerFontSize = isCompact ? 11 : 13;
-    const widths = [10, 104, 18, 28, 30];
-    const headers = ["No", "Item Description", "Qty", "Price", "Total"];
+    const widths = [9, 90, 9, 3, 9, 12, 10, 18, 30];
     let x = tableX;
 
     ctx.fillStyle = "#e01b24";
     fillRoundedRect(ctx, tableX, tableY, 190, rowHeight, 2);
-    headers.forEach((header, index) => {
-      const align = index === 1 ? "left" : index === 2 ? "center" : "right";
-      const textX = align === "left" ? x + 3 : align === "center" ? x + widths[index] / 2 : x + widths[index] - 3;
-      drawText(ctx, header, textX, tableY + rowHeight * 0.67, { align, color: "#ffffff", size: headerFontSize, weight: "700" });
-      x += widths[index];
-    });
+    drawText(ctx, labels.no, x + widths[0] / 2, tableY + rowHeight * 0.67, { align: "center", color: "#ffffff", size: headerFontSize, weight: "700" });
+    x += widths[0];
+    drawText(ctx, labels.productDescription, x + 3, tableY + rowHeight * 0.67, { color: "#ffffff", size: headerFontSize, weight: "700", maxWidth: widths[1] - 6 });
+    x += widths[1];
+    drawText(ctx, labels.size, x + (widths[2] + widths[3] + widths[4]) / 2, tableY + rowHeight * 0.67, { align: "center", color: "#ffffff", size: headerFontSize, weight: "700" });
+    x += widths[2] + widths[3] + widths[4];
+    drawText(ctx, labels.sqf, x + widths[5] / 2, tableY + rowHeight * 0.67, { align: "center", color: "#ffffff", size: headerFontSize, weight: "700" });
+    x += widths[5];
+    drawText(ctx, labels.qty, x + widths[6] / 2, tableY + rowHeight * 0.67, { align: "center", color: "#ffffff", size: headerFontSize, weight: "700" });
+    x += widths[6];
+    drawText(ctx, labels.rate, x + widths[7] - 3, tableY + rowHeight * 0.67, { align: "right", color: "#ffffff", size: headerFontSize, weight: "700" });
+    x += widths[7];
+    drawText(ctx, labels.total, x + widths[8] - 3, tableY + rowHeight * 0.67, { align: "right", color: "#ffffff", size: headerFontSize, weight: "700" });
 
     invoice.items.forEach((item, index) => {
       const y = tableY + rowHeight * (index + 1);
       const textY = y + rowHeight * 0.66;
       let cellX = tableX;
+      const sqf = lineSqf(item);
       ctx.strokeStyle = "#dddddd";
       ctx.beginPath();
       ctx.moveTo(tableX, y + rowHeight);
@@ -262,11 +271,19 @@ export function ShareInvoiceButton() {
       cellX += widths[0];
       drawText(ctx, item.name || "", cellX + 3, textY, { size: tableFontSize, maxWidth: widths[1] - 6 });
       cellX += widths[1];
-      drawText(ctx, String(item.quantity || 0), cellX + widths[2] / 2, textY, { align: "center", size: tableFontSize });
+      drawText(ctx, formatDecimal(item.width || 0), cellX + widths[2] / 2, textY, { align: "center", size: tableFontSize });
       cellX += widths[2];
-      drawText(ctx, formatMoney(item.unitPrice || 0, currency), cellX + widths[3] - 3, textY, { align: "right", size: tableFontSize });
+      drawText(ctx, item.width > 0 || item.height > 0 ? "X" : "", cellX + widths[3] / 2, textY, { align: "center", color: "#71717a", size: tableFontSize, weight: "700" });
       cellX += widths[3];
-      drawText(ctx, formatMoney(lineTotal(item), currency), cellX + widths[4] - 3, textY, { align: "right", size: tableFontSize, weight: "700" });
+      drawText(ctx, formatDecimal(item.height || 0), cellX + widths[4] / 2, textY, { align: "center", size: tableFontSize });
+      cellX += widths[4];
+      drawText(ctx, formatDecimal(sqf), cellX + widths[5] / 2, textY, { align: "center", size: tableFontSize, weight: "700" });
+      cellX += widths[5];
+      drawText(ctx, formatDecimal(item.quantity || 0), cellX + widths[6] / 2, textY, { align: "center", size: tableFontSize });
+      cellX += widths[6];
+      drawText(ctx, formatMoney(item.unitPrice || 0, currency), cellX + widths[7] - 3, textY, { align: "right", size: tableFontSize });
+      cellX += widths[7];
+      drawText(ctx, formatMoney(lineTotal(item), currency), cellX + widths[8] - 3, textY, { align: "right", size: tableFontSize, weight: "700" });
     });
 
     const summaryX = 130;
@@ -281,21 +298,21 @@ export function ShareInvoiceButton() {
       summaryY += summaryRowHeight;
     };
 
-    summaryRow("Subtotal", formatMoney(totals.subtotal, currency));
-    summaryRow("Discount", String(invoice.discount || 0));
-    summaryRow("VAT / Tax %", String(invoice.taxRate || 0));
-    summaryRow("Grand Total", formatMoney(totals.grandTotal, currency), true);
-    summaryRow("Advance", String(invoice.advance || 0));
+    summaryRow(labels.totalSqf, formatDecimal(totals.totalSqf));
+    summaryRow(labels.subtotal, formatMoney(totals.subtotal, currency));
+    summaryRow(labels.vatTax, String(invoice.taxRate || 0));
+    summaryRow(labels.grandTotal, formatMoney(totals.grandTotal, currency), true);
+    summaryRow(labels.advance, String(invoice.advance || 0));
 
     ctx.strokeStyle = "#1a1a1a";
     ctx.lineWidth = 0.6;
     const remainingY = summaryY + (isCompact ? 5 : 8);
     strokeRoundedRect(ctx, 140, remainingY, 60, 10, 5);
-    drawText(ctx, "Remaining:", 147, remainingY + 6.5, { size: 12.5, weight: "700" });
+    drawText(ctx, labels.remaining, 147, remainingY + 6.5, { size: 12.5, weight: "700" });
     drawText(ctx, formatMoney(totals.remaining, currency), 197, remainingY + 6.5, { align: "right", color: "#e01b24", size: 12.5, weight: "700" });
 
     const footerY = Math.min(226, Math.max(isCompact ? 214 : 218, remainingY + 18));
-    drawText(ctx, "Signature", PAGE_PADDING_MM, footerY, { color: "#5a5a5a", size: 11 });
+    drawText(ctx, labels.signature, PAGE_PADDING_MM, footerY, { color: "#5a5a5a", size: 11 });
     ctx.strokeStyle = "#1a1a1a";
     ctx.lineWidth = 0.45;
     ctx.beginPath();
