@@ -204,7 +204,7 @@ export function ShareInvoiceButton() {
     const totals = calculateTotals(invoice);
     const currency = invoice.settings.currency;
     const isCompact = invoice.items.length > 8;
-    const labels = getInvoiceLabels(invoice.settings.language);
+    const labels = getInvoiceLabels();
 
     ctx.drawImage(topSideImage, 0, 0, 86, 50.6);
     ctx.drawImage(

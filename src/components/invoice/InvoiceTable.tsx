@@ -13,7 +13,7 @@ export function InvoiceTable() {
   const removeItem = useInvoiceStore((state) => state.removeItem);
   const reorderItem = useInvoiceStore((state) => state.reorderItem);
   const compact = invoice.items.length > 8;
-  const labels = getInvoiceLabels(invoice.settings.language);
+  const labels = getInvoiceLabels();
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 

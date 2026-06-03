@@ -9,7 +9,7 @@ import Image from "next/image";
 export function InvoiceHeader() {
   const invoice = useInvoiceStore((state) => state.invoice);
   const updateInvoice = useInvoiceStore((state) => state.updateInvoice);
-  const labels = getInvoiceLabels(invoice.settings.language);
+  const labels = getInvoiceLabels();
 
   const updateCustomer = (key: keyof InvoiceData["customer"], value: string) =>
     updateInvoice({ customer: { ...invoice.customer, [key]: value } });

@@ -1,5 +1,3 @@
-import type { InvoiceLanguage } from "@/types/invoice";
-
 export const invoiceLabels = {
   english: {
     invoice: "Invoice",
@@ -47,6 +45,6 @@ export const invoiceLabels = {
   }
 } as const;
 
-export function getInvoiceLabels(language: InvoiceLanguage | undefined) {
+export function getInvoiceLabels() {
   return invoiceLabels.english;
 }

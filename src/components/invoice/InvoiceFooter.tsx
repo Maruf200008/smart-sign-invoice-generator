@@ -18,7 +18,7 @@ export function InvoiceFooter() {
   const invoice = useInvoiceStore((state) => state.invoice);
   const itemCount = invoice.items.length;
   const compact = itemCount > 8;
-  const labels = getInvoiceLabels(invoice.settings.language);
+  const labels = getInvoiceLabels();
 
   return (
     <footer

@@ -10,7 +10,7 @@ export function InvoiceSummary() {
   const totals = calculateTotals(invoice);
   const currency = invoice.settings.currency;
   const compact = invoice.items.length > 8;
-  const labels = getInvoiceLabels(invoice.settings.language);
+  const labels = getInvoiceLabels();
 
   return (
     <>
