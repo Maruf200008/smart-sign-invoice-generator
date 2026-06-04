@@ -34,12 +34,13 @@ export async function loadCloudInvoices() {
   return data;
 }
 
-export async function saveCloudInvoice(savedInvoice: SavedInvoice) {
+export async function saveCloudInvoice(savedInvoice: SavedInvoice, username = "") {
   const response = await fetch("/api/invoices", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-smart-sign-client-id": getInvoiceClientId()
+      "x-smart-sign-client-id": getInvoiceClientId(),
+      "x-smart-sign-username": username
     },
     body: JSON.stringify(savedInvoice)
   });

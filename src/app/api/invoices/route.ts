@@ -1,9 +1,15 @@
 import { NextResponse } from "next/server";
 import type { SavedInvoice } from "@/types/invoice";
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_REST_KEY =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ??
+  process.env.SUPABASE_SERVICE_KEY ??
+  process.env.SUPABASE_ANON_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const TABLE_NAME = "smart_sign_invoices";
+const SHARED_CLIENT_ID = "smart-sign-shared-database";
 
 function jsonResponse(body: unknown, status = 200) {
   return NextResponse.json(body, { status });
@@ -13,21 +19,27 @@ function getClientId(request: Request) {
   return request.headers.get("x-smart-sign-client-id")?.trim() || "";
 }
 
-function isConfigured() {
-  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY);
+function getUsername(request: Request) {
+  return request.headers.get("x-smart-sign-username")?.trim().toLowerCase() || "unknown";
 }
 
-async function supabaseRequest(path: string, init: RequestInit = {}) {
+function isConfigured() {
+  return Boolean(SUPABASE_URL && SUPABASE_REST_KEY);
+}
+
+async function supabaseRequest(path: string, init: RequestInit = {}, clientId = "") {
   if (!isConfigured()) {
     return null;
   }
 
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+  const supabaseUrl = SUPABASE_URL?.replace(/\/$/, "");
+  const response = await fetch(`${supabaseUrl}/rest/v1/${path}`, {
     ...init,
     headers: {
-      apikey: SUPABASE_SERVICE_ROLE_KEY ?? "",
-      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      apikey: SUPABASE_REST_KEY ?? "",
+      Authorization: `Bearer ${SUPABASE_REST_KEY}`,
       "Content-Type": "application/json",
+      ...(clientId ? { "x-smart-sign-client-id": clientId } : {}),
       Prefer: "return=representation",
       ...(init.headers ?? {})
     },
@@ -36,7 +48,11 @@ async function supabaseRequest(path: string, init: RequestInit = {}) {
 
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || "Supabase request failed.");
+    const rlsHint = message.includes("row-level security")
+      ? " Supabase RLS blocked this request. Add SUPABASE_SERVICE_ROLE_KEY to .env.local, or run the RLS policies from supabase-schema.sql."
+      : "";
+
+    throw new Error(`${message || "Supabase request failed."}${rlsHint}`);
   }
 
   if (response.status === 204) {
@@ -46,20 +62,14 @@ async function supabaseRequest(path: string, init: RequestInit = {}) {
   return response.json();
 }
 
-export async function GET(request: Request) {
-  const clientId = getClientId(request);
-
+export async function GET() {
   if (!isConfigured()) {
     return jsonResponse({ configured: false, invoices: [] });
   }
 
-  if (!clientId) {
-    return jsonResponse({ error: "Missing client id." }, 400);
-  }
-
   const cutoff = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
   const rows = await supabaseRequest(
-    `${TABLE_NAME}?client_id=eq.${encodeURIComponent(clientId)}&saved_at=gte.${encodeURIComponent(cutoff)}&order=saved_at.desc`
+    `${TABLE_NAME}?saved_at=gte.${encodeURIComponent(cutoff)}&order=saved_at.desc`
   );
 
   return jsonResponse({
@@ -69,31 +79,28 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const clientId = getClientId(request);
+  const clientId = getClientId(request) || SHARED_CLIENT_ID;
+  const username = getUsername(request);
 
   if (!isConfigured()) {
     return jsonResponse({ configured: false });
   }
 
-  if (!clientId) {
-    return jsonResponse({ error: "Missing client id." }, 400);
-  }
-
   const savedInvoice = (await request.json()) as SavedInvoice;
+  const createdBy = await resolveCreatedBy(savedInvoice.id, username);
 
   await supabaseRequest(`${TABLE_NAME}?on_conflict=id`, {
     method: "POST",
     headers: {
       Prefer: "resolution=merge-duplicates,return=representation"
     },
-    body: JSON.stringify(savedInvoiceToRow(savedInvoice, clientId))
-  });
+    body: JSON.stringify(savedInvoiceToRow(savedInvoice, clientId, createdBy))
+  }, clientId);
 
   return jsonResponse({ configured: true });
 }
 
 export async function DELETE(request: Request) {
-  const clientId = getClientId(request);
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
 
@@ -101,11 +108,11 @@ export async function DELETE(request: Request) {
     return jsonResponse({ configured: false });
   }
 
-  if (!clientId || !id) {
-    return jsonResponse({ error: "Missing client id or invoice id." }, 400);
+  if (!id) {
+    return jsonResponse({ error: "Missing invoice id." }, 400);
   }
 
-  await supabaseRequest(`${TABLE_NAME}?client_id=eq.${encodeURIComponent(clientId)}&id=eq.${encodeURIComponent(id)}`, {
+  await supabaseRequest(`${TABLE_NAME}?id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: {
       Prefer: "return=minimal"
@@ -119,22 +126,32 @@ function rowToSavedInvoice(row: {
   id: string;
   name: string;
   saved_at: string;
+  created_by?: string;
   invoice: SavedInvoice["invoice"];
 }): SavedInvoice {
   return {
     id: row.id,
     name: row.name,
     savedAt: row.saved_at,
+    createdBy: row.created_by,
     invoice: row.invoice
   };
 }
 
-function savedInvoiceToRow(savedInvoice: SavedInvoice, clientId: string) {
+function savedInvoiceToRow(savedInvoice: SavedInvoice, clientId: string, username: string) {
   return {
     id: savedInvoice.id,
     client_id: clientId,
     name: savedInvoice.name,
     saved_at: savedInvoice.savedAt,
+    created_by: username,
     invoice: savedInvoice.invoice
   };
+}
+
+async function resolveCreatedBy(invoiceId: string, username: string) {
+  const rows = await supabaseRequest(`${TABLE_NAME}?id=eq.${encodeURIComponent(invoiceId)}&select=created_by&limit=1`);
+  const existingRow = Array.isArray(rows) ? rows[0] as { created_by?: string } | undefined : undefined;
+
+  return existingRow?.created_by || username || "unknown";
 }

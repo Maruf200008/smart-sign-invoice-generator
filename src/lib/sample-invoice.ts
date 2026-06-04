@@ -1,5 +1,5 @@
 import type { InvoiceData } from "@/types/invoice";
-import { createBlankItem, generateInvoiceNumber } from "@/lib/invoice-utils";
+import { createBlankItem, formatLocalDateInput, generateInvoiceNumber } from "@/lib/invoice-utils";
 
 export function createSampleInvoice(): InvoiceData {
   return {
@@ -17,7 +17,7 @@ export function createSampleInvoice(): InvoiceData {
       address: "Uttara, Dhaka, Bangladesh",
       phone: "+880 1811-223344",
       invoiceNumber: generateInvoiceNumber(),
-      date: new Date().toISOString().slice(0, 10)
+      date: formatLocalDateInput()
     },
     items: Array.from({ length: 10 }, () => createBlankItem()),
     advance: 0,

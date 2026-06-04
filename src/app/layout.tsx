@@ -13,9 +13,20 @@ const notoBengali = Noto_Sans_Bengali({
 });
 
 export const metadata: Metadata = {
-  title: "Smart Sign Invoice ",
+  title: "Smart Sign Invoice",
   description:
     "Premium A4 invoice generator with live editing, PDF export, print layout, and Bangla support.",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/fav_icon.svg",
+    shortcut: "/fav_icon.svg",
+    apple: "/fav_icon.svg"
+  },
+  appleWebApp: {
+    capable: true,
+    title: "Smart Sign",
+    statusBarStyle: "default"
+  }
 };
 
 export default function RootLayout({

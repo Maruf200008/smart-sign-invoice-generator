@@ -1,6 +1,6 @@
 "use client";
 
-import smartSignLogo from "@/assets/smart_sign_logo.png";
+import smartSignLogo from "@/assets/smart_sign_logo.svg";
 import { getInvoiceLabels } from "@/lib/invoice-labels";
 import { useInvoiceStore } from "@/store/invoice-store";
 import type { InvoiceData } from "@/types/invoice";
@@ -16,43 +16,45 @@ export function InvoiceHeader() {
 
   return (
     <header>
-      <div className="relative min-h-32 px-4 pb-5 pt-5 sm:min-h-40 sm:px-10 sm:pb-6 sm:pt-6">
-        <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between sm:gap-0">
-          <h1 className="mt-28 font-sans text-[34px] font-black uppercase leading-none tracking-normal text-[#e01b24] sm:mt-32 sm:text-[42px]">
+      <div className="bg-[#231f20] px-4 pb-4 pt-8 sm:px-12 sm:pb-6 sm:pt-12">
+        <div className="flex min-h-[88px] items-end justify-end sm:min-h-[130px]">
+          <Image
+            src={smartSignLogo}
+            alt="Smart Sign Color Lab"
+            width={430}
+            height={122}
+            priority
+            className="h-auto w-[300px] object-contain sm:w-[430px]"
+          />
+        </div>
+      </div>
+
+      <div className="px-4 pb-4 pt-5 sm:px-10 sm:pb-5 sm:pt-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <h1 className="font-sans text-[34px] font-black uppercase leading-none tracking-normal text-[#e01b24] sm:text-[42px]">
             {labels.invoice}
           </h1>
 
-          <div className="mt-2 flex flex-col items-stretch sm:mt-0 sm:items-end">
-            <Image
-              src={smartSignLogo}
-              alt="Smart Sign Color Lab"
-              width={300}
-              height={101}
-              priority
-              className="h-auto w-[220px] object-contain sm:w-[300px]"
+          <div className="grid gap-1.5 sm:w-auto">
+            <MetaField
+              label={labels.slNo}
+              value={invoice.customer.invoiceNumber}
+              onChange={(value) => updateCustomer("invoiceNumber", value)}
             />
-
-            <div className="mt-3 grid gap-1.5 sm:w-auto">
-              <MetaField
-                label={labels.slNo}
-                value={invoice.customer.invoiceNumber}
-                onChange={(value) => updateCustomer("invoiceNumber", value)}
-              />
-              <MetaField
-                label={labels.date}
-                type="date"
-                value={invoice.customer.date}
-                onChange={(value) => updateCustomer("date", value)}
-              />
-            </div>
+            <MetaField
+              label={labels.date}
+              type="date"
+              value={invoice.customer.date}
+              onChange={(value) => updateCustomer("date", value)}
+            />
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 px-4 pb-4 pt-2 sm:px-10">
-        <span className="min-w-7 text-[13px] font-semibold">{labels.to}</span>
+      <div className="flex items-center gap-1.5 px-4 pb-4 sm:px-10">
+        <span className="min-w-8 text-[15px] font-bold">{labels.to}</span>
         <Editable
-          className="flex-1 px-1 py-1 text-[13px] outline-none"
+          className="flex-1 px-1 py-1 text-[15px] font-bold outline-none"
           placeholder={labels.enterTo}
           value={invoice.customer.name}
           onChange={(value) => updateCustomer("name", value)}

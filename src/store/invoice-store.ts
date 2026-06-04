@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { InvoiceData, InvoiceItem, SavedInvoice } from "@/types/invoice";
-import { calculateLineTotal, calculateSqf, createBlankItem, generateInvoiceNumber, roundToTwo, safePositiveNumber, uid } from "@/lib/invoice-utils";
+import { calculateLineTotal, calculateSqf, createBlankItem, formatLocalDateInput, generateInvoiceNumber, roundToTwo, safePositiveNumber, uid } from "@/lib/invoice-utils";
 import { createSampleInvoice } from "@/lib/sample-invoice";
 
 interface InvoiceStore {
@@ -66,18 +66,26 @@ function upsertSavedInvoice(savedInvoices: SavedInvoice[], invoice: InvoiceData,
   return pruneSavedInvoices([savedInvoice, ...nextSavedInvoices]);
 }
 
-function mergeSavedInvoiceLists(currentInvoices: SavedInvoice[], incomingInvoices: SavedInvoice[]) {
-  const invoiceMap = new Map<string, SavedInvoice>();
+function replaceSavedInvoiceList(incomingInvoices: SavedInvoice[]) {
+  return pruneSavedInvoices(incomingInvoices);
+}
 
-  [...currentInvoices, ...incomingInvoices].forEach((savedInvoice) => {
-    const existing = invoiceMap.get(savedInvoice.id);
+function savedInvoiceListsAreEqual(first: SavedInvoice[], second: SavedInvoice[]) {
+  if (first.length !== second.length) {
+    return false;
+  }
 
-    if (!existing || new Date(savedInvoice.savedAt).getTime() > new Date(existing.savedAt).getTime()) {
-      invoiceMap.set(savedInvoice.id, savedInvoice);
-    }
+  return first.every((invoice, index) => {
+    const otherInvoice = second[index];
+
+    return (
+      otherInvoice &&
+      invoice.id === otherInvoice.id &&
+      invoice.name === otherInvoice.name &&
+      invoice.savedAt === otherInvoice.savedAt &&
+      invoice.invoice.updatedAt === otherInvoice.invoice.updatedAt
+    );
   });
-
-  return pruneSavedInvoices(Array.from(invoiceMap.values()));
 }
 
 function normalizeInvoice(invoice: InvoiceData) {
@@ -106,7 +114,7 @@ function normalizeItems(items: InvoiceItem[]) {
   return items.map((item) => {
     const width = normalizeNumber(item.width);
     const height = normalizeNumber(item.height);
-    const sqf = "sqf" in item ? normalizeNumber(item.sqf) : calculateSqf(width, height);
+    const sqf = calculateSqf(width, height);
     const quantity = normalizeNumber(item.quantity);
     const unitPrice = normalizeNumber(item.unitPrice);
     const totalIsManual = Boolean(item.totalIsManual);
@@ -140,7 +148,7 @@ function normalizeNumber(value: unknown) {
 function withCalculatedFields(item: InvoiceItem, patch: Partial<InvoiceItem>) {
   const nextItem = { ...item, ...patch };
   const sizeChanged = "width" in patch || "height" in patch;
-  const calculationChanged = sizeChanged || "sqf" in patch || "quantity" in patch || "unitPrice" in patch;
+  const calculationChanged = sizeChanged || "quantity" in patch || "unitPrice" in patch;
 
   if (sizeChanged) {
     nextItem.sqf = calculateSqf(nextItem.width, nextItem.height);
@@ -292,7 +300,7 @@ export const useInvoiceStore = create<InvoiceStore>()(
         set({
           invoice: touch({
             ...invoice,
-            customer: { ...invoice.customer, invoiceNumber: generateInvoiceNumber(), date: new Date().toISOString().slice(0, 10) },
+            customer: { ...invoice.customer, invoiceNumber: generateInvoiceNumber(), date: formatLocalDateInput() },
             items: invoice.items.map((item) => ({ ...item, id: uid("item") })),
             settings: { ...invoice.settings, status: "draft" }
           })
@@ -352,13 +360,19 @@ export const useInvoiceStore = create<InvoiceStore>()(
           savedInvoices: state.savedInvoices.filter((savedInvoice) => savedInvoice.id !== id)
         })),
       mergeSavedInvoices: (savedInvoices) =>
-        set((state) => ({
-          savedInvoices: mergeSavedInvoiceLists(state.savedInvoices, savedInvoices.map((savedInvoice) => ({
+        set((state) => {
+          const nextSavedInvoices = replaceSavedInvoiceList(savedInvoices.map((savedInvoice) => ({
             ...savedInvoice,
             name: savedInvoice.name || savedInvoiceName(savedInvoice.invoice),
             invoice: normalizeInvoice(savedInvoice.invoice)
-          })))
-        }))
+          })));
+
+          if (savedInvoiceListsAreEqual(state.savedInvoices, nextSavedInvoices)) {
+            return state;
+          }
+
+          return { savedInvoices: nextSavedInvoices };
+        })
     }),
     {
       name: "smart-invoice-draft",

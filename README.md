@@ -1,6 +1,6 @@
 # Smart Sign Invoice Generator
 
-A production-oriented Next.js invoice generator with a Smart Sign branded A4 invoice template, live editing, auto-save invoice history, direct print, PDF export, and optional Supabase database sync for long-term storage.
+A production-oriented Next.js invoice generator with a Smart Sign branded A4 invoice template, live editing, login-protected invoice history, direct print, PDF export, and Supabase database sync for long-term storage.
 
 ## Features
 
@@ -14,10 +14,13 @@ A production-oriented Next.js invoice generator with a Smart Sign branded A4 inv
 - Drag-and-drop item row reordering, add row, remove row, refresh current invoice, new invoice, and new SL number actions.
 - Automatic subtotal, tax, total, advance, and remaining balance calculation.
 - Browser draft persistence with migration support so unfinished invoices stay saved locally.
-- Auto-saved invoice sidebar with one-year retention, date-wise grouping, search by name/date/SL number, click-to-edit, delete, and "See More Menu" expansion after five invoices.
-- Optional Supabase-backed cloud storage for at least one year of invoice history, suitable for Netlify deployment.
+- Login and signup with username, email, and password, plus Gmail OTP login recovery.
+- Auto-saved invoice sidebar with one-year retention, date-wise grouping, search by name/date/SL number/creator, click-to-edit, single delete confirmation, bulk select/delete, and "See More Menu" expansion.
+- Supabase-backed shared invoice storage with `created_by` tracking for the user who first created each invoice.
 - Bangla-friendly text rendering with Nirmala and Noto Sans Bengali support.
 - Direct print support plus share/copy invoice actions that generate a PDF or clipboard-friendly invoice image.
+- Smart Sign web app manifest for desktop install and mobile Add to Home Screen shortcuts.
+- Brand-loader overlay animation using the Smart Sign icon during loading and long-running actions.
 
 ## Install
 
@@ -28,7 +31,7 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-## Supabase Storage
+## Supabase Storage And Auth
 
 The app works with local browser storage by default. To store invoice history in a database for at least one year, configure Supabase:
 
@@ -41,9 +44,19 @@ SUPABASE_URL=https://your-project-ref.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
+`NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `SUPABASE_ANON_KEY`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` are also supported as aliases. The service role key must only be used on the server.
+
 The `SUPABASE_SERVICE_ROLE_KEY` must stay private. Do not commit `.env.local`; it is ignored by git.
 
-When Supabase is configured, the app auto-syncs saved invoices through the server API route at `src/app/api/invoices/route.ts`. If cloud sync is unavailable, local auto-save remains active.
+When Supabase is configured, the app auto-syncs saved invoices through the server API route at `src/app/api/invoices/route.ts`. Saved invoices are shared across browsers and devices.
+
+The same schema also creates `smart_sign_users` for app login/signup, `smart_sign_login_otps` for OTP login recovery, and adds `created_by` to `smart_sign_invoices`. Re-run `supabase-schema.sql` after pulling schema changes.
+
+Forgot-password login uses a Gmail OTP. Add `GMAIL_USER` and a Gmail App Password as `GMAIL_APP_PASSWORD` in `.env.local` and deployment environment variables.
+
+## Desktop and Mobile Shortcut
+
+The app includes a web app manifest with the Smart Sign icon. Open the deployed site in Chrome/Edge and use Install app, or on mobile use Add to Home Screen. The shortcut opens the site directly with the Smart Sign logo.
 
 ## Netlify Deployment
 

@@ -1,22 +1,20 @@
 "use client";
 
-import bottomSide from "@/assets/bottom_side.svg";
-import smartSignLogo from "@/assets/smart_sign_logo.png";
-import topSide from "@/assets/top_side-01.svg";
+import smartSignLogo from "@/assets/smart_sign_logo.svg";
+import { BrandLoaderOverlay } from "@/components/brand/BrandLoader";
 import { ActionButton } from "@/components/controls/ActionButton";
 import { getInvoiceLabels } from "@/lib/invoice-labels";
 import { calculateTotals, formatDecimal, formatMoney, lineSqf, lineTotal } from "@/lib/invoice-utils";
 import { useInvoiceStore } from "@/store/invoice-store";
 import { Check, Copy, Share2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const A4_WIDTH_MM = 210;
 const A4_HEIGHT_MM = 297;
 const PAGE_PADDING_MM = 10;
 const PX_PER_MM = 8;
 const CSS_PX_TO_MM = 25.4 / 96;
-const BOTTOM_DECOR_WIDTH_MM = 62;
-const BOTTOM_DECOR_HEIGHT_MM = 36.5;
+const TOP_BANNER_HEIGHT_MM = 50;
 
 const contactInfo = [
   { icon: "user", text: "Md. Mahabubur Rahmn" },
@@ -180,11 +178,38 @@ export function ShareInvoiceButton() {
   const [isSharing, setIsSharing] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isMenuOpen) {
+      return;
+    }
+
+    function closeOnOutsideClick(event: PointerEvent) {
+      if (menuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      setIsMenuOpen(false);
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsideClick, true);
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideClick, true);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [isMenuOpen]);
 
   async function createInvoiceCanvas() {
-    const [topSideImage, bottomSideImage, logoImage] = await Promise.all([
-      loadImage(topSide.src),
-      loadImage(bottomSide.src),
+    const [logoImage] = await Promise.all([
       loadImage(smartSignLogo.src),
       loadCanvasFonts()
     ]);
@@ -206,17 +231,11 @@ export function ShareInvoiceButton() {
     const isCompact = invoice.items.length > 8;
     const labels = getInvoiceLabels();
 
-    ctx.drawImage(topSideImage, 0, 0, 86, 50.6);
-    ctx.drawImage(
-      bottomSideImage,
-      A4_WIDTH_MM - BOTTOM_DECOR_WIDTH_MM,
-      A4_HEIGHT_MM - BOTTOM_DECOR_HEIGHT_MM,
-      BOTTOM_DECOR_WIDTH_MM,
-      BOTTOM_DECOR_HEIGHT_MM
-    );
-    ctx.drawImage(logoImage, 118, 14, 82, 27.4);
+    ctx.fillStyle = "#231f20";
+    ctx.fillRect(0, 0, A4_WIDTH_MM, TOP_BANNER_HEIGHT_MM);
+    ctx.drawImage(logoImage, 84, 16, 112, 31.7);
 
-    drawText(ctx, labels.invoice, PAGE_PADDING_MM, 51, { color: "#e01b24", size: 34, weight: "700" });
+    drawText(ctx, labels.invoice, PAGE_PADDING_MM, 67, { color: "#e01b24", size: 34, weight: "700" });
 
     ctx.strokeStyle = "#1a1a1a";
     ctx.lineWidth = 0.45;
@@ -227,14 +246,14 @@ export function ShareInvoiceButton() {
       drawText(ctx, label, metaX + 2, y + 4.8, { size: 12, weight: "700" });
       drawText(ctx, value || "", metaX + 19, y + 4.8, { size: 12 });
     };
-    drawMeta(labels.slNo, invoice.customer.invoiceNumber, 46);
-    drawMeta(labels.date, invoice.customer.date, 55);
+    drawMeta(labels.slNo, invoice.customer.invoiceNumber, 62);
+    drawMeta(labels.date, invoice.customer.date, 71);
 
-    drawText(ctx, labels.to, PAGE_PADDING_MM, 76, { size: 13, weight: "700" });
-    drawText(ctx, invoice.customer.name || "", PAGE_PADDING_MM + 9, 76, { size: 13 });
+    drawText(ctx, labels.to, PAGE_PADDING_MM, 90, { size: 13, weight: "700" });
+    drawText(ctx, invoice.customer.name || "", PAGE_PADDING_MM + 9, 90, { size: 13 });
 
     const tableX = PAGE_PADDING_MM;
-    const tableY = isCompact ? 82 : 86;
+    const tableY = isCompact ? 96 : 100;
     const rowHeight = isCompact ? Math.max(5.2, Math.min(7.4, 74 / Math.max(invoice.items.length, 1))) : 8.5;
     const tableFontSize = isCompact ? 10.2 : 12.4;
     const headerFontSize = isCompact ? 11 : 13;
@@ -287,7 +306,7 @@ export function ShareInvoiceButton() {
     });
 
     const summaryX = 130;
-    let summaryY = Math.max(tableY + rowHeight * (invoice.items.length + 1) + (isCompact ? 7 : 12), isCompact ? 118 : 126);
+    let summaryY = Math.max(tableY + rowHeight * (invoice.items.length + 1) + (isCompact ? 7 : 12), isCompact ? 132 : 140);
     const summaryRowHeight = isCompact ? 6.6 : 8;
     const summaryFontSize = isCompact ? 10.4 : 12.2;
     const summaryRow = (label: string, value: string, bold = false) => {
@@ -427,7 +446,7 @@ export function ShareInvoiceButton() {
   }
 
   return (
-    <div className="relative">
+    <div ref={menuRef} className="relative">
       <ActionButton
         icon={<Share2 className="size-4" />}
         variant="primary"
@@ -436,6 +455,8 @@ export function ShareInvoiceButton() {
       >
         {isSharing ? "Working..." : "Share"}
       </ActionButton>
+
+      {isSharing && <BrandLoaderOverlay label="Preparing invoice" />}
 
       {isMenuOpen && (
         <div className="absolute right-0 top-12 z-50 grid w-44 overflow-hidden rounded-md border border-zinc-200 bg-white p-1 text-sm font-semibold text-zinc-800 shadow-xl">

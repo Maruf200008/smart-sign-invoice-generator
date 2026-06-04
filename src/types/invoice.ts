@@ -60,6 +60,7 @@ export interface SavedInvoice {
   id: string;
   name: string;
   savedAt: string;
+  createdBy?: string;
   invoice: InvoiceData;
 }
 
