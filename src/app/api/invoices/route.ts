@@ -11,8 +11,19 @@ const SUPABASE_REST_KEY =
 const TABLE_NAME = "smart_sign_invoices";
 const SHARED_CLIENT_ID = "smart-sign-shared-database";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 function jsonResponse(body: unknown, status = 200) {
-  return NextResponse.json(body, { status });
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+      "Surrogate-Control": "no-store"
+    }
+  });
 }
 
 function getClientId(request: Request) {

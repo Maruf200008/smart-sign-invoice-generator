@@ -22,11 +22,47 @@ export function generateInvoiceNumber() {
 }
 
 export function formatLocalDateInput(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
 
-  return `${year}-${month}-${day}`;
+  return `${day}/${month}/${year}`;
+}
+
+export function formatInvoiceDate(value: string) {
+  const trimmedValue = value.trim();
+  const isoDateMatch = trimmedValue.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const dayMonthYearMatch = trimmedValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+
+  if (isoDateMatch) {
+    const [, year, month, day] = isoDateMatch;
+    return `${day.padStart(2, "0")}/${month.padStart(2, "0")}/${year}`;
+  }
+
+  if (dayMonthYearMatch) {
+    const [, day, month, year] = dayMonthYearMatch;
+    return `${day.padStart(2, "0")}/${month.padStart(2, "0")}/${year}`;
+  }
+
+  return value;
+}
+
+export function toDateInputValue(value: string) {
+  const trimmedValue = value.trim();
+  const isoDateMatch = trimmedValue.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const dayMonthYearMatch = trimmedValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+
+  if (isoDateMatch) {
+    const [, year, month, day] = isoDateMatch;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  if (dayMonthYearMatch) {
+    const [, day, month, year] = dayMonthYearMatch;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  }
+
+  return "";
 }
 
 export function createBlankItem(): InvoiceItem {
@@ -49,6 +85,13 @@ export function lineSqf(item: InvoiceItem) {
   }
 
   return 0;
+}
+
+export function lineQuantitySqf(item: InvoiceItem) {
+  const sqf = lineSqf(item);
+  const quantity = safePositiveNumber(item.quantity) || 1;
+
+  return roundToTwo(sqf * quantity);
 }
 
 export function lineTotal(item: InvoiceItem) {
@@ -93,9 +136,7 @@ export function calculateLineTotal(item: InvoiceItem) {
 }
 
 export function calculateTotals(invoice: InvoiceData): InvoiceTotals {
-  const totalSqf = roundToTwo(
-    invoice.items.reduce((sum, item) => sum + lineSqf(item) * (safePositiveNumber(item.quantity) || 1), 0)
-  );
+  const totalSqf = roundToTwo(invoice.items.reduce((sum, item) => sum + lineQuantitySqf(item), 0));
   const subtotal = invoice.items.reduce((sum, item) => sum + lineTotal(item), 0);
   const taxable = subtotal;
   const tax = taxable * (safeNumber(invoice.taxRate) / 100);

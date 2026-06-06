@@ -1,15 +1,15 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, FileText, LogOut, RefreshCw, RotateCcw, Search, Trash2, Wand2, X } from "lucide-react";
-import { type MouseEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, FileText, LogOut, Plus, Search, Trash2, Wand2, X } from "lucide-react";
+import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionButton } from "@/components/controls/ActionButton";
 import { BrandLoader } from "@/components/brand/BrandLoader";
 import { ShareInvoiceButton } from "@/components/controls/PDFExportButton";
 import { PrintButton } from "@/components/controls/PrintButton";
 import backgroundPattern from "@/assets/background_pattern.jpg";
 import { InvoicePreview } from "@/components/invoice/InvoicePreview";
-import { deleteCloudInvoice, loadCloudInvoices, saveCloudInvoice } from "@/lib/invoice-cloud-storage";
+import { deleteCloudInvoice, loadCloudInvoices, saveCloudInvoice, saveCloudInvoiceBeforeUnload } from "@/lib/invoice-cloud-storage";
 import { useInvoiceStore } from "@/store/invoice-store";
 import type { AuthUser } from "@/types/auth";
 
@@ -17,9 +17,11 @@ const SAVED_INVOICE_PREVIEW_LIMIT = 10;
 
 export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: AuthUser; onSignOut: () => void }) {
   const [isMounted, setIsMounted] = useState(false);
+  const [isCloudReady, setIsCloudReady] = useState(false);
   const [showSavedInvoices, setShowSavedInvoices] = useState(false);
+  const savedInvoiceSidebarRef = useRef<HTMLDivElement>(null);
+  const savedInvoiceToggleRef = useRef<HTMLSpanElement>(null);
   const invoice = useInvoiceStore((state) => state.invoice);
-  const refreshCurrentInvoice = useInvoiceStore((state) => state.refreshCurrentInvoice);
   const resetDraft = useInvoiceStore((state) => state.resetDraft);
   const newInvoiceNumber = useInvoiceStore((state) => state.newInvoiceNumber);
   const savedInvoices = useInvoiceStore((state) => state.savedInvoices);
@@ -27,6 +29,8 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
   const loadSavedInvoice = useInvoiceStore((state) => state.loadSavedInvoice);
   const deleteSavedInvoice = useInvoiceStore((state) => state.deleteSavedInvoice);
   const mergeSavedInvoices = useInvoiceStore((state) => state.mergeSavedInvoices);
+  const loadCloudSavedInvoices = useInvoiceStore((state) => state.loadCloudSavedInvoices);
+  const undoLastChange = useInvoiceStore((state) => state.undoLastChange);
   const refreshCloudInvoices = useCallback(() => {
     return loadCloudInvoices()
       .then((result) => {
@@ -49,11 +53,34 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
       return;
     }
 
-    refreshCloudInvoices();
-  }, [isMounted, refreshCloudInvoices]);
+    let isCancelled = false;
+
+    loadCloudInvoices()
+      .then((result) => {
+        if (isCancelled) {
+          return;
+        }
+
+        if (result.configured) {
+          loadCloudSavedInvoices(result.invoices);
+        }
+      })
+      .catch((error) => {
+        console.error("Unable to load cloud invoices.", error);
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsCloudReady(true);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isMounted, loadCloudSavedInvoices]);
 
   useEffect(() => {
-    if (!isMounted) {
+    if (!isMounted || !isCloudReady) {
       return;
     }
 
@@ -62,10 +89,10 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
     }, 4000);
 
     return () => window.clearInterval(intervalId);
-  }, [isMounted, refreshCloudInvoices]);
+  }, [isCloudReady, isMounted, refreshCloudInvoices]);
 
   useEffect(() => {
-    if (!isMounted || !activeSavedInvoiceId) {
+    if (!isMounted || !isCloudReady || !activeSavedInvoiceId) {
       return;
     }
 
@@ -82,10 +109,86 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
           console.error("Unable to save cloud invoice.", error);
           // Keep local auto-save working even if database sync fails.
         });
-    }, 900);
+    }, 250);
 
     return () => window.clearTimeout(timeoutId);
-  }, [activeSavedInvoiceId, currentUser.username, isMounted, refreshCloudInvoices, savedInvoices]);
+  }, [activeSavedInvoiceId, currentUser.username, isCloudReady, isMounted, refreshCloudInvoices, savedInvoices]);
+
+  useEffect(() => {
+    if (!isMounted || !isCloudReady || !activeSavedInvoiceId) {
+      return;
+    }
+
+    const activeSavedInvoice = savedInvoices.find((savedInvoice) => savedInvoice.id === activeSavedInvoiceId);
+
+    if (!activeSavedInvoice) {
+      return;
+    }
+
+    const invoiceToSave = activeSavedInvoice;
+
+    function saveBeforeUnload() {
+      saveCloudInvoiceBeforeUnload(invoiceToSave, currentUser.username);
+    }
+
+    window.addEventListener("beforeunload", saveBeforeUnload);
+    window.addEventListener("pagehide", saveBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", saveBeforeUnload);
+      window.removeEventListener("pagehide", saveBeforeUnload);
+    };
+  }, [activeSavedInvoiceId, currentUser.username, isCloudReady, isMounted, savedInvoices]);
+
+  useEffect(() => {
+    const handleUndoShortcut = (event: KeyboardEvent) => {
+      const isUndoKey = event.key.toLowerCase() === "z" && (event.ctrlKey || event.metaKey) && !event.shiftKey;
+
+      if (!isUndoKey) {
+        return;
+      }
+
+      event.preventDefault();
+      undoLastChange();
+    };
+
+    window.addEventListener("keydown", handleUndoShortcut, true);
+    return () => window.removeEventListener("keydown", handleUndoShortcut, true);
+  }, [undoLastChange]);
+
+  useEffect(() => {
+    if (!showSavedInvoices) {
+      return;
+    }
+
+    function hideOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setShowSavedInvoices(false);
+      }
+    }
+
+    function hideOnOutsideClick(event: PointerEvent) {
+      const target = event.target;
+
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (savedInvoiceSidebarRef.current?.contains(target) || savedInvoiceToggleRef.current?.contains(target)) {
+        return;
+      }
+
+      setShowSavedInvoices(false);
+    }
+
+    document.addEventListener("keydown", hideOnEscape);
+    document.addEventListener("pointerdown", hideOnOutsideClick);
+
+    return () => {
+      document.removeEventListener("keydown", hideOnEscape);
+      document.removeEventListener("pointerdown", hideOnOutsideClick);
+    };
+  }, [showSavedInvoices]);
 
   function handleDeleteSavedInvoice(id: string) {
     deleteSavedInvoice(id);
@@ -97,7 +200,7 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
       });
   }
 
-  if (!isMounted) {
+  if (!isMounted || !isCloudReady) {
     return (
       <main className="grid min-h-screen place-items-center bg-[#e8e8e8]">
         <BrandLoader />
@@ -121,12 +224,13 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
           animate={{ opacity: 1, y: 0 }}
           className="no-print grid w-full grid-cols-2 justify-items-center gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-center sm:gap-3"
         >
-          <ActionButton icon={<RefreshCw className="size-4" />} onClick={refreshCurrentInvoice}>Refresh</ActionButton>
-          <ActionButton icon={<FileText className="size-4" />} onClick={() => setShowSavedInvoices((isVisible) => !isVisible)}>
-            {showSavedInvoices ? "Hide Saved Invoice" : "Show Saved Invoice"}
-          </ActionButton>
+          <span ref={savedInvoiceToggleRef} className="contents">
+            <ActionButton icon={<FileText className="size-4" />} onClick={() => setShowSavedInvoices((isVisible) => !isVisible)}>
+              {showSavedInvoices ? "Hide Saved Invoice" : "Show Saved Invoice"}
+            </ActionButton>
+          </span>
           <ActionButton icon={<Wand2 className="size-4" />} onClick={newInvoiceNumber}>New SL</ActionButton>
-          <ActionButton icon={<RotateCcw className="size-4" />} onClick={resetDraft}>New Invoice</ActionButton>
+          <ActionButton icon={<Plus className="size-4" />} onClick={resetDraft}>New Invoice</ActionButton>
           <PrintButton />
           <ShareInvoiceButton />
           <ActionButton icon={<LogOut className="size-4" />} onClick={onSignOut}>{currentUser.username}</ActionButton>
@@ -135,6 +239,7 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
         <AnimatePresence>
           {showSavedInvoices && (
             <motion.div
+              ref={savedInvoiceSidebarRef}
               initial={{ opacity: 0, x: -300 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -300 }}
@@ -142,7 +247,9 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
               className="no-print fixed inset-y-0 left-0 z-30 flex w-[320px] max-w-[86vw] justify-center overflow-y-auto bg-white px-4 py-24 shadow-[8px_0_30px_rgba(0,0,0,0.12)]"
             >
               <SavedInvoiceSidebar
+                activeSavedInvoiceId={activeSavedInvoiceId}
                 activeInvoiceNumber={invoice.customer.invoiceNumber}
+                currentUsername={currentUser.username}
                 savedInvoices={savedInvoices}
                 onLoad={loadSavedInvoice}
                 onDelete={handleDeleteSavedInvoice}
@@ -163,12 +270,16 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
 }
 
 function SavedInvoiceSidebar({
+  activeSavedInvoiceId,
   activeInvoiceNumber,
+  currentUsername,
   savedInvoices,
   onLoad,
   onDelete
 }: {
+  activeSavedInvoiceId: string;
   activeInvoiceNumber: string;
+  currentUsername: string;
   savedInvoices: ReturnType<typeof useInvoiceStore.getState>["savedInvoices"];
   onLoad: (id: string) => void;
   onDelete: (id: string) => void;
@@ -178,6 +289,7 @@ function SavedInvoiceSidebar({
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
   const [deleteDialog, setDeleteDialog] = useState<{ ids: string[]; title: string } | null>(null);
+  const [deleteWarning, setDeleteWarning] = useState(false);
   const filteredInvoices = useMemo(() => {
     const normalizedQuery = normalizeSearchText(query);
 
@@ -208,7 +320,7 @@ function SavedInvoiceSidebar({
   const visibleInvoices = isExpanded ? sortedInvoices : sortedInvoices.slice(0, SAVED_INVOICE_PREVIEW_LIMIT);
   const groupedInvoices = useMemo(() => {
     return visibleInvoices.reduce<Array<{ date: string; invoices: typeof visibleInvoices }>>((groups, savedInvoice) => {
-      const date = formatInvoiceDateHeading(savedInvoice.invoice.customer.date || savedInvoice.savedAt);
+      const date = formatInvoiceDateHeading(savedInvoice.invoice.customer.date);
       const group = groups.find((item) => item.date === date);
 
       if (group) {
@@ -225,12 +337,23 @@ function SavedInvoiceSidebar({
     setSelectedInvoiceIds((ids) => (ids.includes(id) ? ids.filter((invoiceId) => invoiceId !== id) : [...ids, id]));
   }
 
-  function handleSingleDelete(id: string, name: string) {
-    setDeleteDialog({ ids: [id], title: name });
+  function handleSingleDelete(id: string) {
+    if (id === activeSavedInvoiceId) {
+      setDeleteWarning(true);
+      return;
+    }
+
+    const invoiceToDelete = savedInvoices.find((savedInvoice) => savedInvoice.id === id);
+    setDeleteDialog({ ids: [id], title: invoiceToDelete?.name || "this invoice" });
   }
 
   function handleBulkDelete() {
     if (selectedInvoiceIds.length === 0) {
+      return;
+    }
+
+    if (selectedInvoiceIds.includes(activeSavedInvoiceId)) {
+      setDeleteWarning(true);
       return;
     }
 
@@ -270,8 +393,16 @@ function SavedInvoiceSidebar({
       return;
     }
 
-    deleteDialog.ids.forEach(onDelete);
-    setSelectedInvoiceIds((ids) => ids.filter((invoiceId) => !deleteDialog.ids.includes(invoiceId)));
+    const deletableIds = deleteDialog.ids.filter((id) => id !== activeSavedInvoiceId);
+
+    if (deletableIds.length !== deleteDialog.ids.length) {
+      setDeleteWarning(true);
+      setDeleteDialog(null);
+      return;
+    }
+
+    deletableIds.forEach(onDelete);
+    setSelectedInvoiceIds((ids) => ids.filter((invoiceId) => !deletableIds.includes(invoiceId)));
     setIsSelecting(false);
     setDeleteDialog(null);
   }
@@ -336,7 +467,7 @@ function SavedInvoiceSidebar({
 
               <ul className="grid gap-2">
                 {group.invoices.map((savedInvoice) => {
-                  const isActive = savedInvoice.invoice.customer.invoiceNumber === activeInvoiceNumber;
+                  const isActive = savedInvoice.id === activeSavedInvoiceId || savedInvoice.invoice.customer.invoiceNumber === activeInvoiceNumber;
                   const isChecked = selectedInvoiceIds.includes(savedInvoice.id);
 
                   return (
@@ -359,15 +490,18 @@ function SavedInvoiceSidebar({
                         <span className="grid min-w-0 gap-0.5">
                           <span className="truncate text-sm font-bold text-zinc-900">{savedInvoice.name}</span>
                           {savedInvoice.createdBy && <span className="truncate text-[11px] font-semibold text-zinc-500">Created by: {savedInvoice.createdBy}</span>}
+                          <span className="truncate text-[11px] font-semibold text-zinc-500">Edited: {formatEditedDate(savedInvoice.savedAt)}</span>
                         </span>
                       </button>
 
                       <button
                         type="button"
                         aria-label={`Delete ${savedInvoice.name}`}
-                        title="Delete saved invoice"
-                        className="mr-1 inline-grid size-7 shrink-0 place-items-center rounded text-zinc-400 transition hover:bg-red-100 hover:text-[#e01b24]"
-                        onClick={() => handleSingleDelete(savedInvoice.id, savedInvoice.name)}
+                        title={isActive ? "Current invoice cannot be deleted while open" : "Delete saved invoice"}
+                        className={`mr-1 inline-grid size-7 shrink-0 place-items-center rounded transition ${
+                          isActive ? "text-zinc-300 hover:bg-amber-50 hover:text-amber-600" : "text-zinc-400 hover:bg-red-100 hover:text-[#e01b24]"
+                        }`}
+                        onClick={() => handleSingleDelete(savedInvoice.id)}
                       >
                         <Trash2 className="size-3.5" />
                       </button>
@@ -395,6 +529,13 @@ function SavedInvoiceSidebar({
           count={deleteDialog.ids.length}
           onCancel={() => setDeleteDialog(null)}
           onConfirm={confirmDelete}
+        />
+      )}
+
+      {deleteWarning && (
+        <ActiveInvoiceDeleteWarning
+          username={currentUsername}
+          onClose={() => setDeleteWarning(false)}
         />
       )}
     </aside>
@@ -474,12 +615,63 @@ function DeleteInvoiceDialog({
   );
 }
 
+function ActiveInvoiceDeleteWarning({
+  username,
+  onClose
+}: {
+  username: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", closeOnEscape);
+
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-[10000] grid place-items-center bg-black/25 px-4 backdrop-blur-sm">
+      <section className="w-full max-w-[440px] rounded-xl border border-amber-300 bg-white p-4 text-center shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-5">
+        <button
+          type="button"
+          aria-label="Close warning"
+          className="ml-auto grid size-7 place-items-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
+          onClick={onClose}
+        >
+          <X className="size-5" />
+        </button>
+
+        <div className="mx-auto mt-1 grid size-11 place-items-center rounded-full bg-amber-50 text-amber-600">
+          <AlertTriangle className="size-6" />
+        </div>
+        <h2 className="mt-3 text-xl font-black text-slate-950">Delete blocked</h2>
+        <p className="mx-auto mt-3 max-w-sm text-sm font-medium leading-relaxed text-slate-800">
+          This invoice is currently open by {username || "another user"} and cannot be deleted right now.
+        </p>
+
+        <button
+          type="button"
+          className="mx-auto mt-5 h-11 rounded-full bg-[#e92335] px-8 text-sm font-black text-white transition hover:bg-[#c91525]"
+          onClick={onClose}
+        >
+          OK
+        </button>
+      </section>
+    </div>
+  );
+}
+
 function normalizeSearchText(value: string) {
   return value.trim().toLowerCase().replace(/[\s_/.,]+/g, "-");
 }
 
 function dateSearchTokens(value: string) {
-  const date = new Date(value);
+  const date = parseInvoiceDate(value);
 
   if (!Number.isFinite(date.getTime())) {
     return [];
@@ -503,7 +695,7 @@ function dateSearchTokens(value: string) {
 }
 
 function formatInvoiceDateHeading(value: string) {
-  const date = new Date(value);
+  const date = parseInvoiceDate(value);
 
   if (!Number.isFinite(date.getTime())) {
     return "No Date";
@@ -531,6 +723,20 @@ function formatSavedDate(value: string) {
   }).format(date);
 }
 
+function formatEditedDate(value: string) {
+  const date = new Date(value);
+
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+
+  const day = String(date.getDate()).padStart(2, "0");
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const year = date.getFullYear();
+
+  return `${day}/${month}/${year}`;
+}
+
 function compareSavedInvoicesByInvoiceDate(
   first: ReturnType<typeof useInvoiceStore.getState>["savedInvoices"][number],
   second: ReturnType<typeof useInvoiceStore.getState>["savedInvoices"][number]
@@ -546,7 +752,19 @@ function compareSavedInvoicesByInvoiceDate(
 }
 
 function dateTimeOrZero(value: string) {
-  const time = new Date(value).getTime();
+  const time = parseInvoiceDate(value).getTime();
 
   return Number.isFinite(time) ? time : 0;
+}
+
+function parseInvoiceDate(value: string) {
+  const trimmedValue = value.trim();
+  const dayMonthYearMatch = trimmedValue.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+
+  if (dayMonthYearMatch) {
+    const [, day, month, year] = dayMonthYearMatch;
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  return new Date(value);
 }

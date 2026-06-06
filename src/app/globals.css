@@ -162,7 +162,7 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 
 .pdf-export-paper footer {
-  padding-bottom: 9rem !important;
+  padding-bottom: 2rem !important;
 }
 
 .pdf-export-paper footer > div {
@@ -236,11 +236,11 @@ input[type="number"]::-webkit-inner-spin-button {
 
   #invoice-paper footer {
     overflow: visible !important;
-    padding-top: 5mm !important;
-    padding-bottom: 24mm !important;
+    padding-top: 1mm !important;
+    padding-bottom: 6mm !important;
   }
 
   #invoice-paper .invoice-remaining-section {
-    padding-bottom: 5mm !important;
+    padding-bottom: 2mm !important;
   }
 }

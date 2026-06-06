@@ -1,10 +1,13 @@
 "use client";
 
 import smartSignLogo from "@/assets/smart_sign_logo.svg";
+import { CalendarDays } from "lucide-react";
+import { formatInvoiceDate, toDateInputValue } from "@/lib/invoice-utils";
 import { getInvoiceLabels } from "@/lib/invoice-labels";
 import { useInvoiceStore } from "@/store/invoice-store";
 import type { InvoiceData } from "@/types/invoice";
 import Image from "next/image";
+import { useRef } from "react";
 
 export function InvoiceHeader() {
   const invoice = useInvoiceStore((state) => state.invoice);
@@ -41,10 +44,9 @@ export function InvoiceHeader() {
               value={invoice.customer.invoiceNumber}
               onChange={(value) => updateCustomer("invoiceNumber", value)}
             />
-            <MetaField
+            <DateMetaField
               label={labels.date}
-              type="date"
-              value={invoice.customer.date}
+              value={formatInvoiceDate(invoice.customer.date)}
               onChange={(value) => updateCustomer("date", value)}
             />
           </div>
@@ -64,15 +66,76 @@ export function InvoiceHeader() {
   );
 }
 
+function DateMetaField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
+  function openDatePicker() {
+    const dateInput = dateInputRef.current;
+
+    if (!dateInput) {
+      return;
+    }
+
+    const pickerInput = dateInput as HTMLInputElement & { showPicker?: () => void };
+
+    if (pickerInput.showPicker) {
+      pickerInput.showPicker();
+      return;
+    }
+
+    pickerInput.click();
+  }
+
+  return (
+    <div className="flex items-center border-[1.5px] border-[#1a1a1a] bg-white">
+      <span className="min-w-14 border-r-[1.5px] border-[#1a1a1a] px-2.5 py-1 text-xs font-semibold">
+        {label}
+      </span>
+      <input
+        className="min-w-0 flex-1 cursor-pointer border-0 bg-white px-2.5 py-1 text-xs outline-none sm:w-32 sm:flex-none"
+        value={value}
+        readOnly
+        onClick={openDatePicker}
+      />
+      <button
+        type="button"
+        aria-label="Choose invoice date"
+        className="relative grid min-w-10 cursor-pointer place-items-center border-l-[1.5px] border-[#1a1a1a] px-2 py-1 text-[#1a1a1a]"
+        onClick={openDatePicker}
+      >
+        <CalendarDays className="size-3.5" aria-hidden="true" />
+      </button>
+      <input
+        ref={dateInputRef}
+        aria-label={label}
+        className="pointer-events-none absolute size-px opacity-0"
+        type="date"
+        value={toDateInputValue(value)}
+        onChange={(event) => onChange(formatInvoiceDate(event.target.value))}
+      />
+    </div>
+  );
+}
+
 function MetaField({
   label,
   value,
   type = "text",
+  placeholder,
   onChange,
 }: {
   label: string;
   value: string;
   type?: string;
+  placeholder?: string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -84,6 +147,7 @@ function MetaField({
         className="min-w-0 flex-1 border-0 bg-white px-2.5 py-1 text-xs outline-none sm:w-40 sm:flex-none"
         type={type}
         value={value}
+        placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
       />
     </label>

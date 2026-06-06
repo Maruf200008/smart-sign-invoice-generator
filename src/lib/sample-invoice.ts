@@ -19,7 +19,7 @@ export function createSampleInvoice(): InvoiceData {
       invoiceNumber: generateInvoiceNumber(),
       date: formatLocalDateInput()
     },
-    items: Array.from({ length: 10 }, () => createBlankItem()),
+    items: Array.from({ length: 15 }, () => createBlankItem()),
     advance: 0,
     taxRate: 0,
     notes: "Thank you for your business. ধন্যবাদ।",

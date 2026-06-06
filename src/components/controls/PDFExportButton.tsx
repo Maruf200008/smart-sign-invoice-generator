@@ -4,7 +4,7 @@ import smartSignLogo from "@/assets/smart_sign_logo.svg";
 import { BrandLoaderOverlay } from "@/components/brand/BrandLoader";
 import { ActionButton } from "@/components/controls/ActionButton";
 import { getInvoiceLabels } from "@/lib/invoice-labels";
-import { calculateTotals, formatDecimal, formatMoney, lineSqf, lineTotal } from "@/lib/invoice-utils";
+import { calculateTotals, formatDecimal, formatMoney, lineQuantitySqf, lineTotal } from "@/lib/invoice-utils";
 import { useInvoiceStore } from "@/store/invoice-store";
 import { Check, Copy, Share2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -17,7 +17,7 @@ const CSS_PX_TO_MM = 25.4 / 96;
 const TOP_BANNER_HEIGHT_MM = 50;
 
 const contactInfo = [
-  { icon: "user", text: "Md. Mahabubur Rahmn" },
+  { icon: "user", text: "Md. Mahabubur Rahman" },
   { icon: "phone", text: "+8801677-206964" },
   { icon: "mail", text: "smartsign2024@gmail.com" },
   { icon: "pin", text: "Appolo Akbari Complex, Oposite Of Chandpur Govt. College,\nChandpur Sadar, Chandpur." }
@@ -229,6 +229,7 @@ export function ShareInvoiceButton() {
     const totals = calculateTotals(invoice);
     const currency = invoice.settings.currency;
     const isCompact = invoice.items.length > 8;
+    const isDense = invoice.items.length > 12;
     const labels = getInvoiceLabels();
 
     ctx.fillStyle = "#231f20";
@@ -253,10 +254,10 @@ export function ShareInvoiceButton() {
     drawText(ctx, invoice.customer.name || "", PAGE_PADDING_MM + 9, 90, { size: 13 });
 
     const tableX = PAGE_PADDING_MM;
-    const tableY = isCompact ? 96 : 100;
-    const rowHeight = isCompact ? Math.max(5.2, Math.min(7.4, 74 / Math.max(invoice.items.length, 1))) : 8.5;
-    const tableFontSize = isCompact ? 10.2 : 12.4;
-    const headerFontSize = isCompact ? 11 : 13;
+    const tableY = isDense ? 94 : isCompact ? 96 : 100;
+    const rowHeight = isDense ? Math.max(4.6, Math.min(6.2, 68 / Math.max(invoice.items.length, 1))) : isCompact ? Math.max(5.2, Math.min(7.4, 74 / Math.max(invoice.items.length, 1))) : 8.5;
+    const tableFontSize = isDense ? 9.2 : isCompact ? 10.2 : 12.4;
+    const headerFontSize = isDense ? 10 : isCompact ? 11 : 13;
     const widths = [9, 90, 9, 3, 9, 12, 10, 18, 30];
     let x = tableX;
 
@@ -268,9 +269,9 @@ export function ShareInvoiceButton() {
     x += widths[1];
     drawText(ctx, labels.size, x + (widths[2] + widths[3] + widths[4]) / 2, tableY + rowHeight * 0.67, { align: "center", color: "#ffffff", size: headerFontSize, weight: "700" });
     x += widths[2] + widths[3] + widths[4];
-    drawText(ctx, labels.sqf, x + widths[5] / 2, tableY + rowHeight * 0.67, { align: "center", color: "#ffffff", size: headerFontSize, weight: "700" });
+    drawText(ctx, labels.qty, x + widths[5] / 2, tableY + rowHeight * 0.67, { align: "center", color: "#ffffff", size: headerFontSize, weight: "700" });
     x += widths[5];
-    drawText(ctx, labels.qty, x + widths[6] / 2, tableY + rowHeight * 0.67, { align: "center", color: "#ffffff", size: headerFontSize, weight: "700" });
+    drawText(ctx, labels.sqf, x + widths[6] / 2, tableY + rowHeight * 0.67, { align: "center", color: "#ffffff", size: headerFontSize, weight: "700" });
     x += widths[6];
     drawText(ctx, labels.rate, x + widths[7] - 3, tableY + rowHeight * 0.67, { align: "right", color: "#ffffff", size: headerFontSize, weight: "700" });
     x += widths[7];
@@ -280,7 +281,7 @@ export function ShareInvoiceButton() {
       const y = tableY + rowHeight * (index + 1);
       const textY = y + rowHeight * 0.66;
       let cellX = tableX;
-      const sqf = lineSqf(item);
+      const quantitySqf = lineQuantitySqf(item);
       ctx.strokeStyle = "#dddddd";
       ctx.beginPath();
       ctx.moveTo(tableX, y + rowHeight);
@@ -296,9 +297,9 @@ export function ShareInvoiceButton() {
       cellX += widths[3];
       drawText(ctx, formatDecimal(item.height || 0), cellX + widths[4] / 2, textY, { align: "center", size: tableFontSize });
       cellX += widths[4];
-      drawText(ctx, formatDecimal(sqf), cellX + widths[5] / 2, textY, { align: "center", size: tableFontSize, weight: "700" });
+      drawText(ctx, formatDecimal(item.quantity || 0), cellX + widths[5] / 2, textY, { align: "center", size: tableFontSize });
       cellX += widths[5];
-      drawText(ctx, formatDecimal(item.quantity || 0), cellX + widths[6] / 2, textY, { align: "center", size: tableFontSize });
+      drawText(ctx, formatDecimal(quantitySqf), cellX + widths[6] / 2, textY, { align: "center", size: tableFontSize, weight: "700" });
       cellX += widths[6];
       drawText(ctx, formatMoney(item.unitPrice || 0, currency), cellX + widths[7] - 3, textY, { align: "right", size: tableFontSize });
       cellX += widths[7];
@@ -306,9 +307,9 @@ export function ShareInvoiceButton() {
     });
 
     const summaryX = 130;
-    let summaryY = Math.max(tableY + rowHeight * (invoice.items.length + 1) + (isCompact ? 7 : 12), isCompact ? 132 : 140);
-    const summaryRowHeight = isCompact ? 6.6 : 8;
-    const summaryFontSize = isCompact ? 10.4 : 12.2;
+    let summaryY = Math.max(tableY + rowHeight * (invoice.items.length + 1) + (isDense ? 5 : isCompact ? 7 : 12), isDense ? 126 : isCompact ? 132 : 140);
+    const summaryRowHeight = isDense ? 5.8 : isCompact ? 6.6 : 8;
+    const summaryFontSize = isDense ? 9.4 : isCompact ? 10.4 : 12.2;
     const summaryRow = (label: string, value: string, bold = false) => {
       ctx.strokeStyle = "#dddddd";
       ctx.strokeRect(summaryX, summaryY, 70, summaryRowHeight);
@@ -325,13 +326,14 @@ export function ShareInvoiceButton() {
 
     ctx.strokeStyle = "#1a1a1a";
     ctx.lineWidth = 0.6;
-    const remainingY = summaryY + (isCompact ? 5 : 8);
-    strokeRoundedRect(ctx, 140, remainingY, 60, 10, 5);
-    drawText(ctx, labels.remaining, 147, remainingY + 6.5, { size: 12.5, weight: "700" });
-    drawText(ctx, formatMoney(totals.remaining, currency), 197, remainingY + 6.5, { align: "right", color: "#e01b24", size: 12.5, weight: "700" });
+    const remainingY = summaryY + (isDense ? 4 : isCompact ? 5 : 8);
+    const remainingHeight = isDense ? 8.5 : 10;
+    strokeRoundedRect(ctx, 140, remainingY, 60, remainingHeight, 5);
+    drawText(ctx, labels.remaining, 147, remainingY + remainingHeight * 0.65, { size: isDense ? 11 : 12.5, weight: "700" });
+    drawText(ctx, formatMoney(totals.remaining, currency), 197, remainingY + remainingHeight * 0.65, { align: "right", color: "#e01b24", size: isDense ? 11 : 12.5, weight: "700" });
 
-    const footerY = Math.min(226, Math.max(isCompact ? 214 : 218, remainingY + 18));
-    drawText(ctx, labels.signature, PAGE_PADDING_MM, footerY, { color: "#5a5a5a", size: 11 });
+    const footerY = isDense ? Math.min(205, Math.max(190, remainingY + 10)) : Math.min(226, Math.max(isCompact ? 214 : 218, remainingY + 18));
+    drawText(ctx, labels.signature, PAGE_PADDING_MM, footerY, { color: "#5a5a5a", size: isDense ? 10 : 11 });
     ctx.strokeStyle = "#1a1a1a";
     ctx.lineWidth = 0.45;
     ctx.beginPath();
@@ -339,13 +341,13 @@ export function ShareInvoiceButton() {
     ctx.lineTo(66, footerY + 8);
     ctx.stroke();
 
-    let contactY = footerY + 22;
+    let contactY = footerY + (isDense ? 12 : 22);
     contactInfo.forEach(({ icon, text }) => {
       drawContactIcon(ctx, icon, PAGE_PADDING_MM, contactY - 3.4);
-      ctx.font = `400 ${12 * CSS_PX_TO_MM}px NirmalaInvoice, 'Nirmala UI', Arial, sans-serif`;
+      ctx.font = `400 ${(isDense ? 10.5 : 12) * CSS_PX_TO_MM}px NirmalaInvoice, 'Nirmala UI', Arial, sans-serif`;
       ctx.fillStyle = "#222222";
       ctx.textAlign = "left";
-      contactY = wrapText(ctx, text, PAGE_PADDING_MM + 7, contactY, 118, 5.8) + 1.25;
+      contactY = wrapText(ctx, text, PAGE_PADDING_MM + 7, contactY, 126, isDense ? 4.8 : 5.8) + (isDense ? 0.35 : 1.25);
     });
 
     return canvas;

@@ -20,8 +20,10 @@ export function getInvoiceClientId() {
 }
 
 export async function loadCloudInvoices() {
-  const response = await fetch("/api/invoices", {
+  const response = await fetch(`/api/invoices?t=${Date.now()}`, {
+    cache: "no-store",
     headers: {
+      "Cache-Control": "no-cache",
       "x-smart-sign-client-id": getInvoiceClientId()
     }
   });
@@ -37,8 +39,10 @@ export async function loadCloudInvoices() {
 export async function saveCloudInvoice(savedInvoice: SavedInvoice, username = "") {
   const response = await fetch("/api/invoices", {
     method: "POST",
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
       "x-smart-sign-client-id": getInvoiceClientId(),
       "x-smart-sign-username": username
     },
@@ -52,10 +56,29 @@ export async function saveCloudInvoice(savedInvoice: SavedInvoice, username = ""
   return response.json() as Promise<{ configured: boolean }>;
 }
 
+export function saveCloudInvoiceBeforeUnload(savedInvoice: SavedInvoice, username = "") {
+  void fetch("/api/invoices", {
+    method: "POST",
+    cache: "no-store",
+    keepalive: true,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      "x-smart-sign-client-id": getInvoiceClientId(),
+      "x-smart-sign-username": username
+    },
+    body: JSON.stringify(savedInvoice)
+  }).catch(() => {
+    // The browser may cancel keepalive requests during shutdown.
+  });
+}
+
 export async function deleteCloudInvoice(id: string) {
   const response = await fetch(`/api/invoices?id=${encodeURIComponent(id)}`, {
     method: "DELETE",
+    cache: "no-store",
     headers: {
+      "Cache-Control": "no-cache",
       "x-smart-sign-client-id": getInvoiceClientId()
     }
   });

@@ -5,18 +5,18 @@ A production-oriented Next.js invoice generator with a Smart Sign branded A4 inv
 ## Features
 
 - Smart Sign branded A4 invoice layout with red-black styling and print-safe spacing.
-- Live invoice editing for customer name, SL number, date, item rows, size, SQF, quantity, rate, total, advance, and tax.
-- Invoice item table with Description, Size, SQF, Qty, Rate, and Total columns.
-- Width and Height auto-calculate SQF, while SQF and Total remain manually editable.
+- Live invoice editing for customer name, SL number, date picker, item rows, size, quantity, SQF, rate, total, advance, and tax.
+- Invoice item table with Description, Size, Qty, SQF, Rate, and Total columns.
+- Width, Height, and Qty auto-calculate row SQF, while Total remains editable.
 - Total supports Qty x Rate, SQF x Rate, or SQF x Qty x Rate calculation.
 - Comma-formatted Total input for easier amount reading.
-- Default 10-row invoice template with compact table spacing for larger invoices.
-- Drag-and-drop item row reordering, add row, remove row, refresh current invoice, new invoice, and new SL number actions.
-- Automatic subtotal, tax, total, advance, and remaining balance calculation.
-- Browser draft persistence with migration support so unfinished invoices stay saved locally.
+- Default 15-row invoice template with a 15-row maximum and compact A4-safe spacing.
+- Drag-and-drop item row reordering, add row, remove row, new invoice, and new SL number actions.
+- Automatic subtotal, editable VAT/Tax percent with calculated tax amount, total, advance, and remaining balance calculation.
+- Database-first invoice loading when Supabase is configured, with local browser storage kept only as the persistence layer/fallback.
 - Login and signup with username, email, and password, plus Gmail OTP login recovery.
-- Auto-saved invoice sidebar with one-year retention, date-wise grouping, search by name/date/SL number/creator, click-to-edit, single delete confirmation, bulk select/delete, and "See More Menu" expansion.
-- Supabase-backed shared invoice storage with `created_by` tracking for the user who first created each invoice.
+- Auto-saved invoice sidebar with one-year retention, date-wise grouping by invoice date, search by name/date/SL number/creator, edited-date display, click-to-edit, active-invoice delete protection, single delete confirmation, bulk select/delete, and "See More Menu" expansion.
+- Supabase-backed shared invoice storage with `created_by` tracking for the user who first created each invoice and database-first refresh behavior.
 - Bangla-friendly text rendering with Nirmala and Noto Sans Bengali support.
 - Direct print support plus share/copy invoice actions that generate a PDF or clipboard-friendly invoice image.
 - Smart Sign web app manifest for desktop install and mobile Add to Home Screen shortcuts.

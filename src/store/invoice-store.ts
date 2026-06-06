@@ -3,13 +3,15 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { InvoiceData, InvoiceItem, SavedInvoice } from "@/types/invoice";
-import { calculateLineTotal, calculateSqf, createBlankItem, formatLocalDateInput, generateInvoiceNumber, roundToTwo, safePositiveNumber, uid } from "@/lib/invoice-utils";
+import { calculateLineTotal, calculateSqf, createBlankItem, formatInvoiceDate, formatLocalDateInput, generateInvoiceNumber, roundToTwo, safePositiveNumber, uid } from "@/lib/invoice-utils";
 import { createSampleInvoice } from "@/lib/sample-invoice";
 
 interface InvoiceStore {
   invoice: InvoiceData;
   savedInvoices: SavedInvoice[];
   activeSavedInvoiceId: string;
+  undoHistory: InvoiceSnapshot[];
+  undoGroup: UndoGroup;
   setInvoice: (invoice: InvoiceData) => void;
   updateInvoice: (patch: Partial<InvoiceData>) => void;
   addItem: () => void;
@@ -25,9 +27,16 @@ interface InvoiceStore {
   loadSavedInvoice: (id: string) => void;
   deleteSavedInvoice: (id: string) => void;
   mergeSavedInvoices: (savedInvoices: SavedInvoice[]) => void;
+  loadCloudSavedInvoices: (savedInvoices: SavedInvoice[]) => void;
+  undoLastChange: () => void;
 }
 
 const SAVED_INVOICE_RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
+const MAX_UNDO_HISTORY = 100;
+const UNDO_GROUP_MS = 1200;
+const MAX_INVOICE_ITEMS = 15;
+type InvoiceSnapshot = Pick<InvoiceStore, "invoice" | "savedInvoices" | "activeSavedInvoiceId">;
+type UndoGroup = { key: string; expiresAt: number } | null;
 
 function touch(invoice: InvoiceData): InvoiceData {
   return { ...invoice, updatedAt: new Date().toISOString() };
@@ -91,6 +100,10 @@ function savedInvoiceListsAreEqual(first: SavedInvoice[], second: SavedInvoice[]
 function normalizeInvoice(invoice: InvoiceData) {
   return {
     ...invoice,
+    customer: {
+      ...invoice.customer,
+      date: formatInvoiceDate(invoice.customer.date)
+    },
     settings: {
       ...invoice.settings,
       language: invoice.settings.language ?? "english"
@@ -106,8 +119,42 @@ function createInitialInvoiceState() {
   return {
     invoice,
     savedInvoices: [savedInvoice],
-    activeSavedInvoiceId: savedInvoice.id
+    activeSavedInvoiceId: savedInvoice.id,
+    undoHistory: [],
+    undoGroup: null
   };
+}
+
+function createUndoSnapshot(state: InvoiceSnapshot): InvoiceSnapshot {
+  return {
+    invoice: state.invoice,
+    savedInvoices: state.savedInvoices,
+    activeSavedInvoiceId: state.activeSavedInvoiceId
+  };
+}
+
+function withUndoHistory(state: InvoiceStore) {
+  return [...state.undoHistory.slice(-(MAX_UNDO_HISTORY - 1)), createUndoSnapshot(state)];
+}
+
+function nextUndoState(state: InvoiceStore, groupKey?: string) {
+  const now = Date.now();
+
+  if (groupKey && state.undoGroup?.key === groupKey && state.undoGroup.expiresAt > now) {
+    return {
+      undoHistory: state.undoHistory,
+      undoGroup: { key: groupKey, expiresAt: now + UNDO_GROUP_MS }
+    };
+  }
+
+  return {
+    undoHistory: withUndoHistory(state),
+    undoGroup: groupKey ? { key: groupKey, expiresAt: now + UNDO_GROUP_MS } : null
+  };
+}
+
+function undoGroupKey(prefix: string, patch: Record<string, unknown>) {
+  return `${prefix}:${Object.keys(patch).sort().join("|")}`;
 }
 
 function normalizeItems(items: InvoiceItem[]) {
@@ -182,7 +229,8 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice: nextInvoice,
             activeSavedInvoiceId,
-            savedInvoices: upsertSavedInvoice(state.savedInvoices, nextInvoice, activeSavedInvoiceId)
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, nextInvoice, activeSavedInvoiceId),
+            ...nextUndoState(state)
           };
         }),
       updateInvoice: (patch) =>
@@ -193,11 +241,16 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice,
             activeSavedInvoiceId,
-            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId)
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
+            ...nextUndoState(state, undoGroupKey("invoice", patch))
           };
         }),
       addItem: () =>
         set((state) => {
+          if (state.invoice.items.length >= MAX_INVOICE_ITEMS) {
+            return state;
+          }
+
           const isFirstItem = state.invoice.items.length === 0;
           const activeSavedInvoiceId = state.activeSavedInvoiceId || uid("saved-invoice");
           const invoice = touch({
@@ -210,7 +263,8 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice,
             activeSavedInvoiceId,
-            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId)
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
+            ...nextUndoState(state)
           };
         }),
       removeItem: (id) =>
@@ -222,7 +276,8 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice,
             activeSavedInvoiceId,
-            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId)
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
+            ...nextUndoState(state)
           };
         }),
       reorderItem: (fromIndex, toIndex) =>
@@ -245,7 +300,8 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice,
             activeSavedInvoiceId,
-            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId)
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
+            ...nextUndoState(state)
           };
         }),
       updateItem: (id, patch) =>
@@ -259,7 +315,8 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice,
             activeSavedInvoiceId,
-            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId)
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
+            ...nextUndoState(state, undoGroupKey(`item:${id}`, patch))
           };
         }),
       refreshCurrentInvoice: () =>
@@ -278,7 +335,8 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice,
             activeSavedInvoiceId,
-            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId)
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
+            ...nextUndoState(state)
           };
         }),
       resetDraft: () => {
@@ -292,19 +350,21 @@ export const useInvoiceStore = create<InvoiceStore>()(
         set({
           invoice: nextInvoice,
           activeSavedInvoiceId,
-          savedInvoices: upsertSavedInvoice(get().savedInvoices, nextInvoice, activeSavedInvoiceId)
+          savedInvoices: upsertSavedInvoice(get().savedInvoices, nextInvoice, activeSavedInvoiceId),
+          ...nextUndoState(get())
         });
       },
       duplicateInvoice: () => {
         const invoice = get().invoice;
-        set({
+        set((state) => ({
           invoice: touch({
             ...invoice,
             customer: { ...invoice.customer, invoiceNumber: generateInvoiceNumber(), date: formatLocalDateInput() },
             items: invoice.items.map((item) => ({ ...item, id: uid("item") })),
             settings: { ...invoice.settings, status: "draft" }
-          })
-        });
+          }),
+          ...nextUndoState(state)
+        }));
       },
       toggleInvoiceLanguage: () =>
         set((state) => ({
@@ -314,7 +374,8 @@ export const useInvoiceStore = create<InvoiceStore>()(
               ...state.invoice.settings,
               language: state.invoice.settings.language === "bangla" ? "english" : "bangla"
             }
-          })
+          }),
+          ...nextUndoState(state)
         })),
       newInvoiceNumber: () =>
         set((state) => {
@@ -327,7 +388,8 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice,
             activeSavedInvoiceId,
-            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId)
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
+            ...nextUndoState(state)
           };
         }),
       saveCurrentInvoice: () =>
@@ -338,7 +400,8 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice,
             activeSavedInvoiceId,
-            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId)
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
+            ...nextUndoState(state)
           };
         }),
       loadSavedInvoice: (id) =>
@@ -352,12 +415,14 @@ export const useInvoiceStore = create<InvoiceStore>()(
           return {
             invoice: touch(normalizeInvoice(savedInvoice.invoice)),
             activeSavedInvoiceId: savedInvoice.id,
-            savedInvoices: pruneSavedInvoices(state.savedInvoices)
+            savedInvoices: pruneSavedInvoices(state.savedInvoices),
+            ...nextUndoState(state)
           };
         }),
       deleteSavedInvoice: (id) =>
         set((state) => ({
-          savedInvoices: state.savedInvoices.filter((savedInvoice) => savedInvoice.id !== id)
+          savedInvoices: state.savedInvoices.filter((savedInvoice) => savedInvoice.id !== id),
+          ...nextUndoState(state)
         })),
       mergeSavedInvoices: (savedInvoices) =>
         set((state) => {
@@ -372,11 +437,62 @@ export const useInvoiceStore = create<InvoiceStore>()(
           }
 
           return { savedInvoices: nextSavedInvoices };
+        }),
+      loadCloudSavedInvoices: (savedInvoices) =>
+        set((state) => {
+          const nextSavedInvoices = replaceSavedInvoiceList(savedInvoices.map((savedInvoice) => ({
+            ...savedInvoice,
+            name: savedInvoice.name || savedInvoiceName(savedInvoice.invoice),
+            invoice: normalizeInvoice(savedInvoice.invoice)
+          })));
+
+          if (nextSavedInvoices.length === 0) {
+            const invoice = createSampleInvoice();
+            const savedInvoice = createSavedInvoice(invoice);
+
+            return {
+              invoice,
+              activeSavedInvoiceId: savedInvoice.id,
+              savedInvoices: [savedInvoice],
+              undoHistory: [],
+              undoGroup: null
+            };
+          }
+
+          const activeSavedInvoice =
+            nextSavedInvoices.find((savedInvoice) => savedInvoice.id === state.activeSavedInvoiceId) ?? nextSavedInvoices[0];
+
+          return {
+            invoice: normalizeInvoice(activeSavedInvoice.invoice),
+            activeSavedInvoiceId: activeSavedInvoice.id,
+            savedInvoices: nextSavedInvoices,
+            undoHistory: [],
+            undoGroup: null
+          };
+        }),
+      undoLastChange: () =>
+        set((state) => {
+          const previousState = state.undoHistory.at(-1);
+
+          if (!previousState) {
+            return state;
+          }
+
+          return {
+            ...previousState,
+            undoHistory: state.undoHistory.slice(0, -1),
+            undoGroup: null
+          };
         })
     }),
     {
       name: "smart-invoice-draft",
-      version: 6,
+      version: 7,
+      partialize: (state) => ({
+        invoice: state.invoice,
+        savedInvoices: state.savedInvoices,
+        activeSavedInvoiceId: state.activeSavedInvoiceId
+      }),
       migrate: (persistedState: unknown) => {
         const state = persistedState as { invoice?: InvoiceData; savedInvoices?: SavedInvoice[]; activeSavedInvoiceId?: string } | undefined;
 
@@ -414,7 +530,7 @@ export const useInvoiceStore = create<InvoiceStore>()(
             ...state.invoice.settings,
             language: state.invoice.settings.language ?? "english"
           },
-          items: Array.from({ length: 10 }, () => createBlankItem())
+          items: Array.from({ length: 15 }, () => createBlankItem())
         });
 
         return {
