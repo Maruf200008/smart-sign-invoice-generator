@@ -96,7 +96,7 @@ export function lineQuantitySqf(item: InvoiceItem) {
 
 export function lineTotal(item: InvoiceItem) {
   if (item.totalIsManual) {
-    return roundToTwo(safePositiveNumber(item.total));
+    return roundToInteger(safePositiveNumber(item.total));
   }
 
   return calculateLineTotal(item) ?? 0;
@@ -121,31 +121,31 @@ export function calculateLineTotal(item: InvoiceItem) {
   const quantity = safePositiveNumber(item.quantity);
 
   if (sqf && quantity) {
-    return roundToTwo(sqf * quantity * rate);
+    return roundToInteger(sqf * quantity * rate);
   }
 
   if (quantity) {
-    return roundToTwo(quantity * rate);
+    return roundToInteger(quantity * rate);
   }
 
   if (sqf) {
-    return roundToTwo(sqf * rate);
+    return roundToInteger(sqf * rate);
   }
 
   return 0;
 }
 
 export function calculateTotals(invoice: InvoiceData): InvoiceTotals {
-  const totalSqf = roundToTwo(invoice.items.reduce((sum, item) => sum + lineQuantitySqf(item), 0));
   const subtotal = invoice.items.reduce((sum, item) => sum + lineTotal(item), 0);
-  const taxable = subtotal;
+  const discount = Math.min(safeNumber(invoice.discount), subtotal);
+  const taxable = Math.max(subtotal - discount, 0);
   const tax = taxable * (safeNumber(invoice.taxRate) / 100);
   const grandTotal = taxable + tax;
   const advance = Math.min(safeNumber(invoice.advance), grandTotal);
 
   return {
-    totalSqf,
     subtotal,
+    discount,
     taxable,
     tax,
     grandTotal,
@@ -183,6 +183,10 @@ export function safePositiveNumber(value: unknown) {
 
 export function roundToTwo(value: number) {
   return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+}
+
+export function roundToInteger(value: number) {
+  return Math.round(Number.isFinite(value) ? value : 0);
 }
 
 export function hasPositiveValue(value: unknown) {

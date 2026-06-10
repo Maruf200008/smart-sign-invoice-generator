@@ -18,8 +18,19 @@ const PASSWORD_DIGEST = "sha256";
 const OTP_EXPIRY_MINUTES = 10;
 
 function jsonResponse(body: unknown, status = 200) {
-  return NextResponse.json(body, { status });
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+      "Surrogate-Control": "no-store"
+    }
+  });
 }
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 function isConfigured() {
   return Boolean(SUPABASE_URL && SUPABASE_REST_KEY);

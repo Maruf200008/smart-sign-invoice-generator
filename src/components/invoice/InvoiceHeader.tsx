@@ -108,7 +108,7 @@ function DateMetaField({
       <button
         type="button"
         aria-label="Choose invoice date"
-        className="relative grid min-w-10 cursor-pointer place-items-center border-l-[1.5px] border-[#1a1a1a] px-2 py-1 text-[#1a1a1a]"
+        className="no-print relative grid min-w-10 cursor-pointer place-items-center border-l-[1.5px] border-[#1a1a1a] px-2 py-1 text-[#1a1a1a]"
         onClick={openDatePicker}
       >
         <CalendarDays className="size-3.5" aria-hidden="true" />

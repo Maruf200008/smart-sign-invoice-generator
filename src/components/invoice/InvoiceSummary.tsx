@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { calculateTotals, formatDecimal, formatMoney, parsePositiveInput } from "@/lib/invoice-utils";
+import { calculateTotals, formatMoney, parsePositiveInput, roundPositiveInput } from "@/lib/invoice-utils";
 import { getInvoiceLabels } from "@/lib/invoice-labels";
 import { useInvoiceStore } from "@/store/invoice-store";
 import type { CurrencyCode } from "@/types/invoice";
@@ -19,8 +19,8 @@ export function InvoiceSummary() {
     <>
       <section className={`flex justify-end px-4 sm:px-10 ${dense ? "pb-2" : compact ? "pb-3" : "pb-5"}`}>
         <div className="w-full sm:w-[280px]">
-          <SummaryRow compact={compact} label={labels.totalSqf} value={formatDecimal(totals.totalSqf)} />
           <SummaryRow compact={compact} label={labels.subtotal} value={formatMoney(totals.subtotal, currency)} />
+          <EditableSummaryRow compact={compact} label={labels.discount} value={invoice.discount} onChange={(value) => updateInvoice({ discount: value })} />
           <VatTaxRow
             compact={compact}
             currency={currency}
@@ -116,10 +116,13 @@ function SummaryNumberInput({
   className: string;
 }) {
   const [displayValue, setDisplayValue] = useState(value === 0 ? "" : String(value));
+  const [isFocused, setIsFocused] = useState(false);
 
   useEffect(() => {
-    setDisplayValue(value === 0 ? "" : String(value));
-  }, [value]);
+    if (!isFocused) {
+      setDisplayValue(value === 0 ? "" : String(value));
+    }
+  }, [isFocused, value]);
 
   return (
     <input
@@ -127,9 +130,16 @@ function SummaryNumberInput({
       type="text"
       inputMode="decimal"
       value={displayValue}
+      onFocus={() => setIsFocused(true)}
       onChange={(event) => {
         setDisplayValue(event.target.value);
         onChange(parsePositiveInput(event.target.value));
+      }}
+      onBlur={(event) => {
+        const roundedValue = roundPositiveInput(event.target.value);
+        setIsFocused(false);
+        setDisplayValue(roundedValue === 0 ? "" : String(roundedValue));
+        onChange(roundedValue);
       }}
     />
   );

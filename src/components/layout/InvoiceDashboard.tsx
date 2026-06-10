@@ -5,11 +5,10 @@ import { AlertTriangle, FileText, LogOut, Plus, Search, Trash2, Wand2, X } from 
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionButton } from "@/components/controls/ActionButton";
 import { BrandLoader } from "@/components/brand/BrandLoader";
-import { ShareInvoiceButton } from "@/components/controls/PDFExportButton";
 import { PrintButton } from "@/components/controls/PrintButton";
 import backgroundPattern from "@/assets/background_pattern.jpg";
 import { InvoicePreview } from "@/components/invoice/InvoicePreview";
-import { deleteCloudInvoice, loadCloudInvoices, saveCloudInvoice, saveCloudInvoiceBeforeUnload } from "@/lib/invoice-cloud-storage";
+import { deleteCloudInvoice, loadCloudInvoices, saveCloudInvoice, saveCloudInvoiceBeforeUnload, touchCloudInvoiceLock } from "@/lib/invoice-cloud-storage";
 import { useInvoiceStore } from "@/store/invoice-store";
 import type { AuthUser } from "@/types/auth";
 
@@ -90,6 +89,23 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
 
     return () => window.clearInterval(intervalId);
   }, [isCloudReady, isMounted, refreshCloudInvoices]);
+
+  useEffect(() => {
+    if (!isMounted || !isCloudReady || !activeSavedInvoiceId) {
+      return;
+    }
+
+    const touchLock = () => {
+      touchCloudInvoiceLock(activeSavedInvoiceId, currentUser.username).catch((error) => {
+        console.error("Unable to refresh invoice lock.", error);
+      });
+    };
+
+    touchLock();
+    const intervalId = window.setInterval(touchLock, 10_000);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeSavedInvoiceId, currentUser.username, isCloudReady, isMounted]);
 
   useEffect(() => {
     if (!isMounted || !isCloudReady || !activeSavedInvoiceId) {
@@ -191,12 +207,26 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
   }, [showSavedInvoices]);
 
   function handleDeleteSavedInvoice(id: string) {
-    deleteSavedInvoice(id);
+    const isDeletingActiveInvoice = id === activeSavedInvoiceId;
     deleteCloudInvoice(id)
-      .then(() => refreshCloudInvoices())
+      .then(async () => {
+        deleteSavedInvoice(id);
+
+        if (isDeletingActiveInvoice) {
+          const nextActiveInvoice = useInvoiceStore
+            .getState()
+            .savedInvoices.find((savedInvoice) => savedInvoice.id === useInvoiceStore.getState().activeSavedInvoiceId);
+
+          if (nextActiveInvoice) {
+            await saveCloudInvoice(nextActiveInvoice, currentUser.username);
+          }
+        }
+
+        return refreshCloudInvoices();
+      })
       .catch((error) => {
         console.error("Unable to delete cloud invoice.", error);
-        // Local delete is immediate; cloud delete will succeed once configured/available.
+        window.alert("This invoice is open somewhere else right now, so it cannot be deleted from here.");
       });
   }
 
@@ -232,7 +262,6 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
           <ActionButton icon={<Wand2 className="size-4" />} onClick={newInvoiceNumber}>New SL</ActionButton>
           <ActionButton icon={<Plus className="size-4" />} onClick={resetDraft}>New Invoice</ActionButton>
           <PrintButton />
-          <ShareInvoiceButton />
           <ActionButton icon={<LogOut className="size-4" />} onClick={onSignOut}>{currentUser.username}</ActionButton>
         </motion.div>
 
@@ -249,7 +278,6 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
               <SavedInvoiceSidebar
                 activeSavedInvoiceId={activeSavedInvoiceId}
                 activeInvoiceNumber={invoice.customer.invoiceNumber}
-                currentUsername={currentUser.username}
                 savedInvoices={savedInvoices}
                 onLoad={loadSavedInvoice}
                 onDelete={handleDeleteSavedInvoice}
@@ -272,14 +300,12 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
 function SavedInvoiceSidebar({
   activeSavedInvoiceId,
   activeInvoiceNumber,
-  currentUsername,
   savedInvoices,
   onLoad,
   onDelete
 }: {
   activeSavedInvoiceId: string;
   activeInvoiceNumber: string;
-  currentUsername: string;
   savedInvoices: ReturnType<typeof useInvoiceStore.getState>["savedInvoices"];
   onLoad: (id: string) => void;
   onDelete: (id: string) => void;
@@ -289,7 +315,6 @@ function SavedInvoiceSidebar({
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
   const [deleteDialog, setDeleteDialog] = useState<{ ids: string[]; title: string } | null>(null);
-  const [deleteWarning, setDeleteWarning] = useState(false);
   const filteredInvoices = useMemo(() => {
     const normalizedQuery = normalizeSearchText(query);
 
@@ -338,22 +363,12 @@ function SavedInvoiceSidebar({
   }
 
   function handleSingleDelete(id: string) {
-    if (id === activeSavedInvoiceId) {
-      setDeleteWarning(true);
-      return;
-    }
-
     const invoiceToDelete = savedInvoices.find((savedInvoice) => savedInvoice.id === id);
     setDeleteDialog({ ids: [id], title: invoiceToDelete?.name || "this invoice" });
   }
 
   function handleBulkDelete() {
     if (selectedInvoiceIds.length === 0) {
-      return;
-    }
-
-    if (selectedInvoiceIds.includes(activeSavedInvoiceId)) {
-      setDeleteWarning(true);
       return;
     }
 
@@ -393,16 +408,8 @@ function SavedInvoiceSidebar({
       return;
     }
 
-    const deletableIds = deleteDialog.ids.filter((id) => id !== activeSavedInvoiceId);
-
-    if (deletableIds.length !== deleteDialog.ids.length) {
-      setDeleteWarning(true);
-      setDeleteDialog(null);
-      return;
-    }
-
-    deletableIds.forEach(onDelete);
-    setSelectedInvoiceIds((ids) => ids.filter((invoiceId) => !deletableIds.includes(invoiceId)));
+    deleteDialog.ids.forEach(onDelete);
+    setSelectedInvoiceIds((ids) => ids.filter((invoiceId) => !deleteDialog.ids.includes(invoiceId)));
     setIsSelecting(false);
     setDeleteDialog(null);
   }
@@ -497,9 +504,9 @@ function SavedInvoiceSidebar({
                       <button
                         type="button"
                         aria-label={`Delete ${savedInvoice.name}`}
-                        title={isActive ? "Current invoice cannot be deleted while open" : "Delete saved invoice"}
+                        title={isActive ? "Delete current invoice and open a new one" : "Delete saved invoice"}
                         className={`mr-1 inline-grid size-7 shrink-0 place-items-center rounded transition ${
-                          isActive ? "text-zinc-300 hover:bg-amber-50 hover:text-amber-600" : "text-zinc-400 hover:bg-red-100 hover:text-[#e01b24]"
+                          isActive ? "text-amber-500 hover:bg-amber-50 hover:text-amber-600" : "text-zinc-400 hover:bg-red-100 hover:text-[#e01b24]"
                         }`}
                         onClick={() => handleSingleDelete(savedInvoice.id)}
                       >
@@ -532,12 +539,6 @@ function SavedInvoiceSidebar({
         />
       )}
 
-      {deleteWarning && (
-        <ActiveInvoiceDeleteWarning
-          username={currentUsername}
-          onClose={() => setDeleteWarning(false)}
-        />
-      )}
     </aside>
   );
 }
@@ -610,57 +611,6 @@ function DeleteInvoiceDialog({
             <Trash2 className="size-4" />
           </button>
         </div>
-      </section>
-    </div>
-  );
-}
-
-function ActiveInvoiceDeleteWarning({
-  username,
-  onClose
-}: {
-  username: string;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    document.addEventListener("keydown", closeOnEscape);
-
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
-
-  return (
-    <div className="fixed inset-0 z-[10000] grid place-items-center bg-black/25 px-4 backdrop-blur-sm">
-      <section className="w-full max-w-[440px] rounded-xl border border-amber-300 bg-white p-4 text-center shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-5">
-        <button
-          type="button"
-          aria-label="Close warning"
-          className="ml-auto grid size-7 place-items-center rounded text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
-          onClick={onClose}
-        >
-          <X className="size-5" />
-        </button>
-
-        <div className="mx-auto mt-1 grid size-11 place-items-center rounded-full bg-amber-50 text-amber-600">
-          <AlertTriangle className="size-6" />
-        </div>
-        <h2 className="mt-3 text-xl font-black text-slate-950">Delete blocked</h2>
-        <p className="mx-auto mt-3 max-w-sm text-sm font-medium leading-relaxed text-slate-800">
-          This invoice is currently open by {username || "another user"} and cannot be deleted right now.
-        </p>
-
-        <button
-          type="button"
-          className="mx-auto mt-5 h-11 rounded-full bg-[#e92335] px-8 text-sm font-black text-white transition hover:bg-[#c91525]"
-          onClick={onClose}
-        >
-          OK
-        </button>
       </section>
     </div>
   );

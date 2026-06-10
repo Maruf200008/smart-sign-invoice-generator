@@ -10,6 +10,7 @@ import {
 import { useInvoiceStore } from "@/store/invoice-store";
 import { GripVertical, Plus, X } from "lucide-react";
 import {
+  type ClipboardEvent,
   type KeyboardEvent,
   type MutableRefObject,
   useEffect,
@@ -40,6 +41,7 @@ export function InvoiceTable() {
   const invoice = useInvoiceStore((state) => state.invoice);
   const addItem = useInvoiceStore((state) => state.addItem);
   const updateItem = useInvoiceStore((state) => state.updateItem);
+  const pasteItemNames = useInvoiceStore((state) => state.pasteItemNames);
   const removeItem = useInvoiceStore((state) => state.removeItem);
   const reorderItem = useInvoiceStore((state) => state.reorderItem);
   const compact = invoice.items.length > 8;
@@ -223,13 +225,37 @@ export function InvoiceTable() {
 
     focusRowInput(rowId, field, event.key === "ArrowUp" ? -1 : 1);
   };
+  const handleNamePaste = (event: ClipboardEvent<HTMLInputElement>, rowIndex: number) => {
+    const text = event.clipboardData.getData("text/plain");
+    const rows = parseSpreadsheetRows(text);
+
+    if (rows.length <= 1) {
+      return;
+    }
+
+    event.preventDefault();
+    pasteItemNames(rowIndex, rows.map((columns) => columns[0] ?? ""));
+    setSelectedCell({ rowId: invoice.items[rowIndex]?.id ?? "", field: "name" });
+    setEditingCell(null);
+  };
 
   return (
     <section className={`px-4 sm:px-10 ${dense ? "pb-2" : compact ? "pb-3" : "pb-5"}`}>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-hidden">
         <table
-          className={`min-w-[660px] w-full border-separate border-spacing-0 text-left sm:min-w-0 ${compact ? "mt-2 text-[12px]" : "mt-4 text-[13px]"}`}
+          className={`w-full table-fixed border-separate border-spacing-0 text-left ${compact ? "mt-2 text-[12px]" : "mt-4 text-[13px]"}`}
         >
+          <colgroup>
+            <col className="w-[7%]" />
+            <col className="w-[39%]" />
+            <col className="w-[6%]" />
+            <col className="w-[3%]" />
+            <col className="w-[6%]" />
+            <col className="w-[7%]" />
+            <col className="w-[10%]" />
+            <col className="w-[9%]" />
+            <col className="w-[13%]" />
+          </colgroup>
           <thead className="relative z-10">
             <tr className="bg-[#e01b24] text-white">
               <th
@@ -238,33 +264,33 @@ export function InvoiceTable() {
                 {labels.no}
               </th>
               <th
-                className={`min-w-[300px] px-2 align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
+                className={`px-2 text-center align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
               >
                 {labels.productDescription}
               </th>
               <th
                 colSpan={3}
-                className={`w-[72px] border-x border-white/35 px-0 text-center align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
+                className={`border-x border-white/35 px-0 text-center align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
               >
                 {labels.size}
               </th>
               <th
-                className={`w-[42px] px-1 text-center align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
+                className={`px-1 text-center align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
               >
                 {labels.qty}
               </th>
               <th
-                className={`w-[48px] px-1 text-center align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
+                className={`px-1 text-center align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
               >
                 {labels.sqf}
               </th>
               <th
-                className={`w-[58px] px-1 text-right align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
+                className={`px-1 text-center align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
               >
                 {labels.rate}
               </th>
               <th
-                className={`w-[86px] rounded-r-lg px-1.5 text-right align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
+                className={`rounded-r-lg px-1.5 text-center align-middle font-bold ${dense ? "py-1" : compact ? "py-1.5" : "py-2.5"}`}
               >
                 {labels.total}
               </th>
@@ -299,15 +325,15 @@ export function InvoiceTable() {
                   }}
                 >
                   <td
-                    className={`px-2 text-center text-xs text-zinc-500 ${dense ? "py-0.5" : compact ? "py-1" : "py-2"}`}
+                    className={`relative px-1 text-center text-xs text-zinc-500 ${dense ? "py-0.5" : compact ? "py-1" : "py-2"}`}
                   >
-                    <div className="flex items-center justify-center gap-1.5">
+                    <div className="flex items-center justify-center">
                       <button
                         type="button"
                         draggable
                         aria-label="Drag row"
                         title="Drag row"
-                        className="no-print grid size-6 cursor-grab place-items-center rounded text-zinc-400 transition-all duration-200 hover:scale-110 hover:bg-red-50 hover:text-[#e01b24] active:cursor-grabbing active:scale-95"
+                        className="no-print absolute left-0 top-1/2 grid size-5 -translate-y-1/2 cursor-grab place-items-center rounded text-zinc-400 opacity-0 transition-all duration-200 hover:scale-110 hover:bg-red-50 hover:text-[#e01b24] active:cursor-grabbing active:scale-95 group-hover:opacity-100"
                         onDragStart={(event) => {
                           setDraggedIndex(index);
                           event.dataTransfer.effectAllowed = "move";
@@ -321,6 +347,16 @@ export function InvoiceTable() {
                         <GripVertical className="size-3.5" />
                       </button>
                       <span className="min-w-4">{index + 1}</span>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        aria-label="Remove row"
+                        title="Remove row"
+                        className="no-print absolute right-0 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-zinc-400 opacity-0 transition hover:bg-red-50 hover:text-[#e01b24] group-hover:opacity-100"
+                        onClick={() => removeItem(item.id)}
+                      >
+                        <X className="size-3.5" />
+                      </button>
                     </div>
                   </td>
                   <td
@@ -408,6 +444,7 @@ export function InvoiceTable() {
                           );
                         }}
                         onBlur={() => stopEditingCell(item.id, "name")}
+                        onPaste={(event) => handleNamePaste(event, index)}
                         onChange={(event) =>
                           updateItem(item.id, { name: event.target.value })
                         }
@@ -415,7 +452,7 @@ export function InvoiceTable() {
                     </div>
                   </td>
                   <td
-                    className={`w-[30px] px-0.5 ${dense ? "py-0.5" : compact ? "py-1" : "py-2"}`}
+                    className={`px-1 ${dense ? "py-0.5" : compact ? "py-1" : "py-2"}`}
                   >
                     <SizeInput
                       ariaLabel="Width"
@@ -437,12 +474,12 @@ export function InvoiceTable() {
                     />
                   </td>
                   <td
-                    className={`w-[10px] px-0 text-center text-xs font-bold text-zinc-400 ${dense ? "py-0.5" : compact ? "py-1" : "py-2"}`}
+                    className={`px-0 text-center text-xs font-bold text-zinc-400 ${dense ? "py-0.5" : compact ? "py-1" : "py-2"}`}
                   >
                     {item.width > 0 || item.height > 0 ? "X" : ""}
                   </td>
                   <td
-                    className={`w-[30px] border-r border-[#ddd] px-0.5 ${dense ? "py-0.5" : compact ? "py-1" : "py-2"}`}
+                    className={`border-r border-[#ddd] px-1 ${dense ? "py-0.5" : compact ? "py-1" : "py-2"}`}
                   >
                     <SizeInput
                       ariaLabel="Height"
@@ -469,7 +506,6 @@ export function InvoiceTable() {
                     <NumberInput
                       ariaLabel="Quantity"
                       className="text-center"
-                      step="1"
                       value={item.quantity}
                       isSelected={isSelected(item.id, "quantity")}
                       isEditing={isEditing(item.id, "quantity")}
@@ -514,10 +550,10 @@ export function InvoiceTable() {
                     />
                   </td>
                   <td className={`bg-zinc-50 px-1.5 ${dense ? "py-0.5" : compact ? "py-1" : "py-2"}`}>
-                    <div className="flex items-center gap-1">
+                    <div>
                       <TotalInput
                         ariaLabel="Total"
-                        className="text-right font-semibold"
+                        className="text-center font-semibold"
                         value={item.total}
                         isSelected={isSelected(item.id, "total")}
                         isEditing={isEditing(item.id, "total")}
@@ -534,16 +570,6 @@ export function InvoiceTable() {
                           updateItem(item.id, { total: value })
                         }
                       />
-                      <button
-                        type="button"
-                        tabIndex={-1}
-                        aria-label="Remove row"
-                        title="Remove row"
-                        className="no-print grid size-7 shrink-0 place-items-center rounded text-zinc-400 transition hover:bg-red-50 hover:text-[#e01b24] sm:size-6 sm:opacity-0 sm:group-hover:opacity-100"
-                        onClick={() => removeItem(item.id)}
-                      >
-                        <X className="size-3.5" />
-                      </button>
                     </div>
                   </td>
                 </tr>
@@ -621,7 +647,6 @@ function NumberInput({
   rowId,
   field,
   className = "",
-  step = "0.01",
 }: {
   ariaLabel: string;
   value: number;
@@ -637,8 +662,11 @@ function NumberInput({
   rowId: string;
   field: EditableField;
   className?: string;
-  step?: string;
 }) {
+  const [isFocused, setIsFocused] = useState(false);
+  const [displayValue, setDisplayValue] = useState(
+    value === 0 ? "" : String(value),
+  );
   const pointerFocusRef = useRef(false);
   const clickTimerRef = useRef<number | null>(null);
   const replaceOnTypeRef = useRef(false);
@@ -649,6 +677,12 @@ function NumberInput({
     }, 0);
   };
 
+  useEffect(() => {
+    if (!isFocused) {
+      setDisplayValue(value === 0 ? "" : String(value));
+    }
+  }, [isFocused, value]);
+
   return (
     <input
       data-row-id={rowId}
@@ -657,9 +691,8 @@ function NumberInput({
       className={`w-full rounded bg-transparent px-1 py-0.5 outline-none focus:bg-[#fff8f8] focus:outline focus:outline-1 focus:outline-[#e01b24] ${className}`}
       type="text"
       min="0"
-      step={step}
       inputMode="decimal"
-      value={value === 0 ? "" : value}
+      value={displayValue}
       readOnly={!isEditing}
       onMouseDown={(event) => {
         markPointerFocus();
@@ -680,11 +713,15 @@ function NumberInput({
         const input = event.currentTarget;
         scheduleSingleClick(clickTimerRef, () => {
           replaceOnTypeRef.current = false;
+          setIsFocused(true);
+          setDisplayValue(value === 0 ? "" : String(value));
           onEdit(input, { moveCursorToEnd: false });
         });
       }}
       onFocus={(event) => {
         if (!pointerFocusRef.current && !isEditing) {
+          setIsFocused(true);
+          setDisplayValue(value === 0 ? "" : String(value));
           replaceOnTypeRef.current = false;
           onEdit(event.currentTarget);
         }
@@ -703,6 +740,7 @@ function NumberInput({
         if (replaceOnTypeRef.current && isEditing && isNumericEntryKey(event)) {
           event.preventDefault();
           replaceOnTypeRef.current = false;
+          setDisplayValue(event.key);
           onChange(parsePositiveInput(event.key));
           window.setTimeout(() => activateInput(event.currentTarget), 0);
           return;
@@ -712,6 +750,8 @@ function NumberInput({
           event.preventDefault();
           event.currentTarget.readOnly = false;
           replaceOnTypeRef.current = false;
+          setIsFocused(true);
+          setDisplayValue(event.key);
           onEdit(event.currentTarget);
           onChange(parsePositiveInput(event.key));
           window.setTimeout(() => activateInput(event.currentTarget), 0);
@@ -727,13 +767,20 @@ function NumberInput({
         }
 
         event.preventDefault();
+        setDisplayValue("");
         onChange(0);
       }}
-      onChange={(event) => onChange(parsePositiveInput(event.target.value))}
+      onChange={(event) => {
+        setDisplayValue(event.target.value);
+        onChange(parsePositiveInput(event.target.value));
+      }}
       onBlur={(event) => {
+        const roundedValue = roundPositiveInput(event.target.value);
         replaceOnTypeRef.current = false;
+        setIsFocused(false);
         onStopEdit();
-        onChange(roundPositiveInput(event.target.value));
+        setDisplayValue(roundedValue === 0 ? "" : String(roundedValue));
+        onChange(roundedValue);
       }}
     />
   );
@@ -769,7 +816,7 @@ function TotalInput({
 }) {
   const [isFocused, setIsFocused] = useState(false);
   const [displayValue, setDisplayValue] = useState(
-    value === 0 ? "" : formatAmountInput(value),
+    value === 0 ? "" : formatIntegerAmountInput(value),
   );
   const pointerFocusRef = useRef(false);
   const clickTimerRef = useRef<number | null>(null);
@@ -783,7 +830,7 @@ function TotalInput({
 
   useEffect(() => {
     if (!isFocused) {
-      setDisplayValue(value === 0 ? "" : formatAmountInput(value));
+      setDisplayValue(value === 0 ? "" : formatIntegerAmountInput(value));
     }
   }, [isFocused, value]);
 
@@ -842,39 +889,37 @@ function TotalInput({
           return;
         }
 
-        if (replaceOnTypeRef.current && isEditing && isNumericEntryKey(event)) {
+        if (replaceOnTypeRef.current && isEditing && isIntegerEntryKey(event)) {
           event.preventDefault();
           replaceOnTypeRef.current = false;
           setDisplayValue(event.key);
-          onChange(parseAmountInput(event.key));
+          onChange(parseIntegerAmountInput(event.key));
           window.setTimeout(() => activateInput(event.currentTarget), 0);
           return;
         }
 
-        if (shouldReplaceSelectedInput(event, isSelected, isEditing)) {
+        if (shouldReplaceSelectedIntegerInput(event, isSelected, isEditing)) {
           event.preventDefault();
           event.currentTarget.readOnly = false;
           replaceOnTypeRef.current = false;
           setIsFocused(true);
           setDisplayValue(event.key);
           onEdit(event.currentTarget);
-          onChange(parseAmountInput(event.key));
+          onChange(parseIntegerAmountInput(event.key));
           window.setTimeout(() => activateInput(event.currentTarget), 0);
         }
       }}
       onChange={(event) => {
         setDisplayValue(event.target.value);
-        onChange(parseAmountInput(event.target.value));
+        onChange(parseIntegerAmountInput(event.target.value));
       }}
       onBlur={(event) => {
-        const roundedValue = roundPositiveInput(
-          stripAmountFormatting(event.target.value),
-        );
+        const roundedValue = parseIntegerAmountInput(event.target.value);
         replaceOnTypeRef.current = false;
         setIsFocused(false);
         onStopEdit();
         setDisplayValue(
-          roundedValue === 0 ? "" : formatAmountInput(roundedValue),
+          roundedValue === 0 ? "" : formatIntegerAmountInput(roundedValue),
         );
         onChange(roundedValue);
       }}
@@ -882,14 +927,18 @@ function TotalInput({
   );
 }
 
-function formatAmountInput(value: number) {
+function formatIntegerAmountInput(value: number) {
   return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 0,
   }).format(Number.isFinite(value) ? value : 0);
 }
 
 function parseAmountInput(value: string) {
   return parsePositiveInput(stripAmountFormatting(value));
+}
+
+function parseIntegerAmountInput(value: string) {
+  return Math.round(parseAmountInput(value));
 }
 
 function stripAmountFormatting(value: string) {
@@ -915,6 +964,18 @@ function shouldReplaceSelectedInput(
   isEditing: boolean,
 ) {
   return isSelected && !isEditing && isNumericEntryKey(event);
+}
+
+function shouldReplaceSelectedIntegerInput(
+  event: KeyboardEvent<HTMLInputElement>,
+  isSelected: boolean,
+  isEditing: boolean,
+) {
+  return isSelected && !isEditing && isIntegerEntryKey(event);
+}
+
+function isIntegerEntryKey(event: KeyboardEvent<HTMLInputElement>) {
+  return isTextEntryKey(event) && /^[\d,]$/.test(event.key);
 }
 
 function scheduleSingleClick(
@@ -949,4 +1010,15 @@ function activateInput(input: HTMLInputElement) {
   input.readOnly = false;
   input.focus();
   moveCursorToEnd(input);
+}
+
+function parseSpreadsheetRows(text: string) {
+  const normalizedText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const trimmedText = normalizedText.endsWith("\n") ? normalizedText.slice(0, -1) : normalizedText;
+
+  if (!trimmedText.includes("\n")) {
+    return [];
+  }
+
+  return trimmedText.split("\n").map((row) => row.split("\t"));
 }

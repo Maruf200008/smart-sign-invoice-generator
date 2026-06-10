@@ -10,6 +10,7 @@ const SUPABASE_REST_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const TABLE_NAME = "smart_sign_invoices";
 const SHARED_CLIENT_ID = "smart-sign-shared-database";
+const ACTIVE_LOCK_MS = 30_000;
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -99,21 +100,68 @@ export async function POST(request: Request) {
 
   const savedInvoice = (await request.json()) as SavedInvoice;
   const createdBy = await resolveCreatedBy(savedInvoice.id, username);
+  const activeLock = await resolveActiveLockForSave(savedInvoice.id, savedInvoice.invoice, clientId, username);
 
   await supabaseRequest(`${TABLE_NAME}?on_conflict=id`, {
     method: "POST",
     headers: {
       Prefer: "resolution=merge-duplicates,return=representation"
     },
-    body: JSON.stringify(savedInvoiceToRow(savedInvoice, clientId, createdBy))
+    body: JSON.stringify(savedInvoiceToRow(savedInvoice, clientId, createdBy, activeLock))
   }, clientId);
 
   return jsonResponse({ configured: true });
 }
 
+export async function PATCH(request: Request) {
+  const clientId = getClientId(request) || SHARED_CLIENT_ID;
+  const username = getUsername(request);
+
+  if (!isConfigured()) {
+    return jsonResponse({ configured: false });
+  }
+
+  const { id } = (await request.json()) as { id?: string };
+
+  if (!id) {
+    return jsonResponse({ error: "Missing invoice id." }, 400);
+  }
+
+  const rows = await supabaseRequest(`${TABLE_NAME}?id=eq.${encodeURIComponent(id)}&select=invoice&limit=1`);
+  const existingRow = Array.isArray(rows) ? rows[0] as { invoice?: SavedInvoice["invoice"] } | undefined : undefined;
+  const invoice = existingRow?.invoice;
+
+  if (!invoice) {
+    return jsonResponse({ configured: true });
+  }
+
+  const activeLock = getActiveLock(invoice);
+
+  if (isFreshLock(activeLock) && activeLock.clientId !== clientId) {
+    return jsonResponse({ configured: true, locked: true });
+  }
+
+  await supabaseRequest(`${TABLE_NAME}?id=eq.${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: {
+      Prefer: "return=minimal"
+    },
+    body: JSON.stringify({
+      invoice: withActiveLock(invoice, {
+        clientId,
+        username,
+        touchedAt: new Date().toISOString()
+      })
+    })
+  }, clientId);
+
+  return jsonResponse({ configured: true, locked: false });
+}
+
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
+  const clientId = getClientId(request) || SHARED_CLIENT_ID;
 
   if (!isConfigured()) {
     return jsonResponse({ configured: false });
@@ -121,6 +169,14 @@ export async function DELETE(request: Request) {
 
   if (!id) {
     return jsonResponse({ error: "Missing invoice id." }, 400);
+  }
+
+  const rows = await supabaseRequest(`${TABLE_NAME}?id=eq.${encodeURIComponent(id)}&select=invoice&limit=1`);
+  const existingRow = Array.isArray(rows) ? rows[0] as { invoice?: SavedInvoice["invoice"] } | undefined : undefined;
+  const activeLock = existingRow?.invoice ? getActiveLock(existingRow.invoice) : null;
+
+  if (isFreshLock(activeLock) && activeLock.clientId !== clientId) {
+    return jsonResponse({ error: "This invoice is currently open on another device." }, 409);
   }
 
   await supabaseRequest(`${TABLE_NAME}?id=eq.${encodeURIComponent(id)}`, {
@@ -149,14 +205,14 @@ function rowToSavedInvoice(row: {
   };
 }
 
-function savedInvoiceToRow(savedInvoice: SavedInvoice, clientId: string, username: string) {
+function savedInvoiceToRow(savedInvoice: SavedInvoice, clientId: string, username: string, activeLock: ActiveInvoiceLock) {
   return {
     id: savedInvoice.id,
     client_id: clientId,
     name: savedInvoice.name,
     saved_at: savedInvoice.savedAt,
     created_by: username,
-    invoice: savedInvoice.invoice
+    invoice: withActiveLock(savedInvoice.invoice, activeLock)
   };
 }
 
@@ -165,4 +221,62 @@ async function resolveCreatedBy(invoiceId: string, username: string) {
   const existingRow = Array.isArray(rows) ? rows[0] as { created_by?: string } | undefined : undefined;
 
   return existingRow?.created_by || username || "unknown";
+}
+
+async function resolveActiveLockForSave(
+  invoiceId: string,
+  invoice: SavedInvoice["invoice"],
+  clientId: string,
+  username: string
+) {
+  const rows = await supabaseRequest(`${TABLE_NAME}?id=eq.${encodeURIComponent(invoiceId)}&select=invoice&limit=1`);
+  const existingRow = Array.isArray(rows) ? rows[0] as { invoice?: SavedInvoice["invoice"] } | undefined : undefined;
+  const existingLock = existingRow?.invoice ? getActiveLock(existingRow.invoice) : getActiveLock(invoice);
+
+  if (isFreshLock(existingLock) && existingLock.clientId !== clientId) {
+    return existingLock;
+  }
+
+  return {
+    clientId,
+    username,
+    touchedAt: new Date().toISOString()
+  };
+}
+
+type ActiveInvoiceLock = {
+  clientId: string;
+  username: string;
+  touchedAt: string;
+};
+
+function getActiveLock(invoice: SavedInvoice["invoice"]) {
+  const lock = (invoice as SavedInvoice["invoice"] & { activeLock?: Partial<ActiveInvoiceLock> }).activeLock;
+
+  if (!lock?.clientId || !lock.touchedAt) {
+    return null;
+  }
+
+  return {
+    clientId: lock.clientId,
+    username: lock.username || "unknown",
+    touchedAt: lock.touchedAt
+  };
+}
+
+function isFreshLock(lock: ActiveInvoiceLock | null): lock is ActiveInvoiceLock {
+  if (!lock) {
+    return false;
+  }
+
+  const touchedAt = new Date(lock.touchedAt).getTime();
+
+  return Number.isFinite(touchedAt) && Date.now() - touchedAt < ACTIVE_LOCK_MS;
+}
+
+function withActiveLock(invoice: SavedInvoice["invoice"], activeLock: ActiveInvoiceLock) {
+  return {
+    ...invoice,
+    activeLock
+  };
 }

@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { InvoiceData, InvoiceItem, SavedInvoice } from "@/types/invoice";
-import { calculateLineTotal, calculateSqf, createBlankItem, formatInvoiceDate, formatLocalDateInput, generateInvoiceNumber, roundToTwo, safePositiveNumber, uid } from "@/lib/invoice-utils";
+import { calculateLineTotal, calculateSqf, createBlankItem, formatInvoiceDate, formatLocalDateInput, generateInvoiceNumber, roundToInteger, roundToTwo, safePositiveNumber, uid } from "@/lib/invoice-utils";
 import { createSampleInvoice } from "@/lib/sample-invoice";
 
 interface InvoiceStore {
@@ -18,6 +18,7 @@ interface InvoiceStore {
   removeItem: (id: string) => void;
   reorderItem: (fromIndex: number, toIndex: number) => void;
   updateItem: (id: string, patch: Partial<InvoiceItem>) => void;
+  pasteItemNames: (startIndex: number, names: string[]) => void;
   refreshCurrentInvoice: () => void;
   resetDraft: () => void;
   duplicateInvoice: () => void;
@@ -108,6 +109,9 @@ function normalizeInvoice(invoice: InvoiceData) {
       ...invoice.settings,
       language: invoice.settings.language ?? "english"
     },
+    advance: normalizeNumber(invoice.advance),
+    discount: normalizeNumber(invoice.discount),
+    taxRate: normalizeNumber(invoice.taxRate),
     items: normalizeItems(invoice.items)
   };
 }
@@ -172,7 +176,7 @@ function normalizeItems(items: InvoiceItem[]) {
       sqf,
       quantity,
       unitPrice,
-      total: normalizeNumber(item.total),
+      total: normalizeTotalNumber(item.total),
       totalIsManual
     };
 
@@ -190,6 +194,15 @@ function normalizeNumber(value: unknown) {
 
   const number = safePositiveNumber(value);
   return number > 0 ? roundToTwo(number) : 0;
+}
+
+function normalizeTotalNumber(value: unknown) {
+  if (value === "" || value === null || value === undefined) {
+    return 0;
+  }
+
+  const number = safePositiveNumber(value);
+  return number > 0 ? roundToInteger(number) : 0;
 }
 
 function withCalculatedFields(item: InvoiceItem, patch: Partial<InvoiceItem>) {
@@ -256,6 +269,7 @@ export const useInvoiceStore = create<InvoiceStore>()(
           const invoice = touch({
             ...state.invoice,
             advance: isFirstItem ? 0 : state.invoice.advance,
+            discount: isFirstItem ? 0 : state.invoice.discount,
             taxRate: isFirstItem ? 0 : state.invoice.taxRate,
             items: [...state.invoice.items, createBlankItem()]
           });
@@ -317,6 +331,43 @@ export const useInvoiceStore = create<InvoiceStore>()(
             activeSavedInvoiceId,
             savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
             ...nextUndoState(state, undoGroupKey(`item:${id}`, patch))
+          };
+        }),
+      pasteItemNames: (startIndex, names) =>
+        set((state) => {
+          const cleanNames = names.map((name) => name.trimEnd());
+
+          if (startIndex < 0 || cleanNames.length === 0 || startIndex >= MAX_INVOICE_ITEMS) {
+            return state;
+          }
+
+          const activeSavedInvoiceId = state.activeSavedInvoiceId || uid("saved-invoice");
+          const items = [...state.invoice.items];
+          const neededLength = Math.min(MAX_INVOICE_ITEMS, startIndex + cleanNames.length);
+
+          while (items.length < neededLength) {
+            items.push(createBlankItem());
+          }
+
+          cleanNames.slice(0, MAX_INVOICE_ITEMS - startIndex).forEach((name, offset) => {
+            const itemIndex = startIndex + offset;
+            const item = items[itemIndex];
+
+            if (item) {
+              items[itemIndex] = withCalculatedFields(item, { name });
+            }
+          });
+
+          const invoice = touch({
+            ...state.invoice,
+            items
+          });
+
+          return {
+            invoice,
+            activeSavedInvoiceId,
+            savedInvoices: upsertSavedInvoice(state.savedInvoices, invoice, activeSavedInvoiceId),
+            ...nextUndoState(state)
           };
         }),
       refreshCurrentInvoice: () =>
@@ -420,10 +471,26 @@ export const useInvoiceStore = create<InvoiceStore>()(
           };
         }),
       deleteSavedInvoice: (id) =>
-        set((state) => ({
-          savedInvoices: state.savedInvoices.filter((savedInvoice) => savedInvoice.id !== id),
-          ...nextUndoState(state)
-        })),
+        set((state) => {
+          const nextSavedInvoices = state.savedInvoices.filter((savedInvoice) => savedInvoice.id !== id);
+
+          if (id !== state.activeSavedInvoiceId) {
+            return {
+              savedInvoices: nextSavedInvoices,
+              ...nextUndoState(state)
+            };
+          }
+
+          const blankInvoice = touch(createSampleInvoice());
+          const activeSavedInvoiceId = uid("saved-invoice");
+
+          return {
+            invoice: blankInvoice,
+            activeSavedInvoiceId,
+            savedInvoices: upsertSavedInvoice(nextSavedInvoices, blankInvoice, activeSavedInvoiceId),
+            ...nextUndoState(state)
+          };
+        }),
       mergeSavedInvoices: (savedInvoices) =>
         set((state) => {
           const nextSavedInvoices = replaceSavedInvoiceList(savedInvoices.map((savedInvoice) => ({
@@ -487,7 +554,7 @@ export const useInvoiceStore = create<InvoiceStore>()(
     }),
     {
       name: "smart-invoice-draft",
-      version: 7,
+      version: 8,
       partialize: (state) => ({
         invoice: state.invoice,
         savedInvoices: state.savedInvoices,
@@ -526,6 +593,9 @@ export const useInvoiceStore = create<InvoiceStore>()(
         const activeSavedInvoiceId = state.activeSavedInvoiceId || savedInvoices[0]?.id || uid("saved-invoice");
         const invoice = touch({
           ...state.invoice,
+          advance: normalizeNumber(state.invoice.advance),
+          discount: normalizeNumber(state.invoice.discount),
+          taxRate: normalizeNumber(state.invoice.taxRate),
           settings: {
             ...state.invoice.settings,
             language: state.invoice.settings.language ?? "english"

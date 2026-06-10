@@ -12,7 +12,8 @@ import { useEffect, useRef, useState } from "react";
 const A4_WIDTH_MM = 210;
 const A4_HEIGHT_MM = 297;
 const PAGE_PADDING_MM = 10;
-const PX_PER_MM = 8;
+const PDF_PX_PER_MM = 8;
+const CLIPBOARD_IMAGE_PX_PER_MM = 96 / 25.4;
 const CSS_PX_TO_MM = 25.4 / 96;
 const TOP_BANNER_HEIGHT_MM = 50;
 
@@ -20,7 +21,7 @@ const contactInfo = [
   { icon: "user", text: "Md. Mahabubur Rahman" },
   { icon: "phone", text: "+8801677-206964" },
   { icon: "mail", text: "smartsign2024@gmail.com" },
-  { icon: "pin", text: "Appolo Akbari Complex, Oposite Of Chandpur Govt. College,\nChandpur Sadar, Chandpur." }
+  { icon: "pin", text: "Appolo Akbari Complex, Opposite Of Chandpur Govt. College,\nChandpur Sadar, Chandpur." }
 ] as const;
 
 function getCurrentDateFilename() {
@@ -208,21 +209,21 @@ export function ShareInvoiceButton() {
     };
   }, [isMenuOpen]);
 
-  async function createInvoiceCanvas() {
+  async function createInvoiceCanvas(pxPerMm = PDF_PX_PER_MM) {
     const [logoImage] = await Promise.all([
       loadImage(smartSignLogo.src),
       loadCanvasFonts()
     ]);
 
     const canvas = document.createElement("canvas");
-    canvas.width = A4_WIDTH_MM * PX_PER_MM;
-    canvas.height = A4_HEIGHT_MM * PX_PER_MM;
+    canvas.width = Math.round(A4_WIDTH_MM * pxPerMm);
+    canvas.height = Math.round(A4_HEIGHT_MM * pxPerMm);
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       throw new Error("Unable to create invoice PDF.");
     }
 
-    ctx.scale(PX_PER_MM, PX_PER_MM);
+    ctx.scale(pxPerMm, pxPerMm);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, A4_WIDTH_MM, A4_HEIGHT_MM);
 
@@ -258,7 +259,7 @@ export function ShareInvoiceButton() {
     const rowHeight = isDense ? Math.max(4.6, Math.min(6.2, 68 / Math.max(invoice.items.length, 1))) : isCompact ? Math.max(5.2, Math.min(7.4, 74 / Math.max(invoice.items.length, 1))) : 8.5;
     const tableFontSize = isDense ? 9.2 : isCompact ? 10.2 : 12.4;
     const headerFontSize = isDense ? 10 : isCompact ? 11 : 13;
-    const widths = [9, 90, 9, 3, 9, 12, 10, 18, 30];
+    const widths = [9, 82, 12, 3, 12, 14, 14, 17, 27];
     let x = tableX;
 
     ctx.fillStyle = "#e01b24";
@@ -318,8 +319,8 @@ export function ShareInvoiceButton() {
       summaryY += summaryRowHeight;
     };
 
-    summaryRow(labels.totalSqf, formatDecimal(totals.totalSqf));
     summaryRow(labels.subtotal, formatMoney(totals.subtotal, currency));
+    summaryRow(labels.discount, formatMoney(totals.discount, currency));
     summaryRow(labels.vatTax, String(invoice.taxRate || 0));
     summaryRow(labels.grandTotal, formatMoney(totals.grandTotal, currency), true);
     summaryRow(labels.advance, String(invoice.advance || 0));
@@ -364,7 +365,7 @@ export function ShareInvoiceButton() {
   }
 
   async function createInvoicePngBlob() {
-    const canvas = await createInvoiceCanvas();
+    const canvas = await createInvoiceCanvas(CLIPBOARD_IMAGE_PX_PER_MM);
 
     return new Promise<Blob>((resolve, reject) => {
       canvas.toBlob((blob) => {

@@ -48,6 +48,7 @@ export interface InvoiceData {
   customer: CustomerInfo;
   items: InvoiceItem[];
   advance: number;
+  discount: number;
   taxRate: number;
   notes: string;
   terms: string;
@@ -65,8 +66,8 @@ export interface SavedInvoice {
 }
 
 export interface InvoiceTotals {
-  totalSqf: number;
   subtotal: number;
+  discount: number;
   taxable: number;
   tax: number;
   grandTotal: number;

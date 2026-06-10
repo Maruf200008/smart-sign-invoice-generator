@@ -73,6 +73,27 @@ export function saveCloudInvoiceBeforeUnload(savedInvoice: SavedInvoice, usernam
   });
 }
 
+export async function touchCloudInvoiceLock(id: string, username = "") {
+  const response = await fetch("/api/invoices", {
+    method: "PATCH",
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-cache",
+      "x-smart-sign-client-id": getInvoiceClientId(),
+      "x-smart-sign-username": username
+    },
+    body: JSON.stringify({ id })
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || "Unable to lock invoice.");
+  }
+
+  return response.json() as Promise<{ configured: boolean; locked?: boolean }>;
+}
+
 export async function deleteCloudInvoice(id: string) {
   const response = await fetch(`/api/invoices?id=${encodeURIComponent(id)}`, {
     method: "DELETE",
@@ -84,7 +105,8 @@ export async function deleteCloudInvoice(id: string) {
   });
 
   if (!response.ok) {
-    throw new Error("Unable to delete cloud invoice.");
+    const message = await response.text();
+    throw new Error(message || "Unable to delete cloud invoice.");
   }
 
   return response.json() as Promise<{ configured: boolean }>;

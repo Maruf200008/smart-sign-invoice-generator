@@ -41,18 +41,6 @@ input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
 }
 
-@keyframes cursorClickPulse {
-  0% {
-    opacity: 0.85;
-    transform: scale(0.55);
-  }
-
-  100% {
-    opacity: 0;
-    transform: scale(1.8);
-  }
-}
-
 @keyframes brandLoaderFloat {
   0%,
   100% {
@@ -103,74 +91,6 @@ input[type="number"]::-webkit-inner-spin-button {
 .invoice-paper {
   print-color-adjust: exact;
   -webkit-print-color-adjust: exact;
-}
-
-.pdf-export-wrapper {
-  position: fixed;
-  inset: 0 auto auto 0;
-  width: 210mm;
-  height: 297mm;
-  overflow: hidden;
-  background: #ffffff;
-  pointer-events: none;
-  z-index: 2147483647;
-}
-
-.pdf-export-paper {
-  width: 210mm !important;
-  max-width: none !important;
-  min-height: 297mm !important;
-  height: 297mm !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-}
-
-.pdf-export-paper > .relative.z-10 {
-  min-height: 297mm !important;
-}
-
-.pdf-export-paper header > div:first-child {
-  min-height: 10rem !important;
-  padding: 1.5rem 2.5rem !important;
-}
-
-.pdf-export-paper header > div:first-child > div {
-  flex-direction: row !important;
-  align-items: flex-start !important;
-  justify-content: space-between !important;
-  gap: 0 !important;
-}
-
-.pdf-export-paper header h1 {
-  margin-top: 8rem !important;
-  font-size: 42px !important;
-}
-
-.pdf-export-paper header img {
-  width: 300px !important;
-}
-
-.pdf-export-paper header > div:nth-child(2),
-.pdf-export-paper section,
-.pdf-export-paper footer {
-  padding-left: 2.5rem !important;
-  padding-right: 2.5rem !important;
-}
-
-.pdf-export-paper table {
-  min-width: 0 !important;
-}
-
-.pdf-export-paper footer {
-  padding-bottom: 2rem !important;
-}
-
-.pdf-export-paper footer > div {
-  grid-template-columns: 1fr 240px !important;
-}
-
-.pdf-export-paper footer > div > div {
-  padding-right: 0 !important;
 }
 
 @page {
