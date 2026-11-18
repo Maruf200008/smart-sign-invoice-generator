@@ -8,7 +8,7 @@ A Next.js 15 invoice generator for Smart Sign: a branded A4 invoice template wit
 - Live editing of customer, SL number, date, up to 15 item rows (size × qty × rate, or qty × rate, or SQF × rate, with manual total override), discount, VAT/Tax %, advance and remaining balance.
 - Multi-row paste from Excel / Google Sheets, drag-and-drop row reordering, undo (Ctrl/Cmd+Z).
 - Shared invoice workspace: every signed-in user sees the last year of invoices, with search, date grouping, bulk delete and `created_by` tracking.
-- Auto-save to the cloud with a per-device edit lock, so two devices can't overwrite each other's work; local browser storage is the offline fallback. A status line shows whether changes are saved.
+- **Ctrl+S / Cmd+S saves straight to the server.** Edits are kept locally as "unsaved changes" and sent on Ctrl+S, every 30 s by auto-save, and when the page is hidden or closed — never per keystroke. Failed saves stay queued on the device and retry automatically (with backoff, and as soon as the connection returns). Saves are idempotent and version-checked, so a stale copy never silently overwrites a newer one; a per-device edit lock keeps two devices from editing at once. The status line shows Unsaved changes / Saving… / Saved / Sync failed – Retry.
 - **Share** button: generates the invoice PDF (named after the recipient, e.g. `Rahim Ahmed.pdf`) and opens the native share sheet on mobile, or downloads it on desktop.
 - Bengali text rendered in the PDF with the bundled Noto Sans Bengali font.
 - Installable web app (manifest + icons).
@@ -39,6 +39,7 @@ Then set up the database (next section).
 
 - creates `smart_sign_users`, `smart_sign_login_otps`, `smart_sign_invoices`, `smart_sign_invoice_shares`;
 - adds the edit-lock columns (`lock_client_id`, `lock_username`, `lock_touched_at`) and the OTP `attempts` counter;
+- adds the invoice `version` column (optimistic locking), the `smart_sign_sync_receipts` idempotency table and the transactional `smart_sign_save_invoice` function used by `POST /api/v1/sync/save` (callable by the service role only);
 - enables Row Level Security on every table with **no** policies and revokes `anon`/`authenticated` access, so the public anon/publishable key can read nothing (older versions of this file let the anon key read password hashes and all invoices — re-running it removes those policies).
 
 ### Backups
@@ -92,12 +93,43 @@ Requires header `x-smart-sign-client-id` (random per-browser id, `[A-Za-z0-9-]{8
 
 | Method | Description | Responses |
 | --- | --- | --- |
-| `GET` | Invoices saved in the last 365 days (max 1000), newest first. | `200 {configured, invoices: SavedInvoice[]}` |
-| `POST` | Create/update `{id, name, savedAt, invoice}`. `created_by` is the session user on first save. | `200 {configured, savedAt, createdBy}`, `400`, `409 {locked: true}` if another device is editing, `413` |
+| `GET` | Invoices saved in the last 365 days (max 1000), newest first, each with its server `version`. | `200 {configured, invoices: SavedInvoice[]}` |
 | `PATCH` | `{id}` refreshes this device's edit lock; `{id, release: true}` releases it. Only lock columns are written. | `200 {configured, locked, lockedBy?}` |
 | `DELETE` | `?id=` deletes an invoice unless another device holds its lock. | `200`, `409 {locked: true}` |
 
 An edit lock lapses 30 seconds after its last refresh; the app refreshes it every 10 seconds while the tab is visible.
+
+Saving goes through `POST /api/v1/sync/save` (below), not this endpoint.
+
+### `POST /api/v1/sync/save`
+
+Saves one invoice snapshot in a single database transaction.
+
+```json
+{
+  "documentId": "saved-invoice-…",
+  "changes": { "name": "Customer", "invoice": { "…": "full InvoiceData" } },
+  "updatedAt": "2026-11-19T10:00:00.000Z",
+  "clientId": "per-browser id",
+  "syncId": "unique id per snapshot (idempotency key)",
+  "baseVersion": 3,
+  "priorSyncIds": []
+}
+```
+
+- `baseVersion` is the server version the edit started from (`null` for a new invoice). If the server has moved on, the save is refused with a conflict instead of overwriting.
+- Retrying with the same `syncId` is safe: an already-applied `syncId` is answered from its receipt (`duplicate: true`) without saving twice.
+- `priorSyncIds` lists earlier syncIds whose response the client never received; versions they created count as the client's own, not as a conflict.
+- Saving content identical to the server copy always succeeds without a new version.
+
+| Status | Body |
+| --- | --- |
+| `200` | `{success: true, serverUpdatedAt, version, createdBy, duplicate, message: "Saved successfully"}` |
+| `409` | `{success: false, conflict: true, reason: "stale" | "deleted" | "exists", serverVersion, server?, message: "Newer version exists on server"}` |
+| `423` | `{success: false, locked: true, lockedBy, message}` — another device holds the edit lock |
+| `400` / `413` | Invalid or oversized request (not retried automatically) |
+| `502` / `500` | Storage failure (retried automatically with the same `syncId`) |
+| `503` | `{configured: false}` — no cloud storage; the app stays in device-only mode |
 
 ### `/api/shares`
 
@@ -148,7 +180,8 @@ Any Node host works the same way (`npm ci && npm run build && npm start`); Verce
 src/
   app/
     api/auth/          Sign-up, sign-in, OTP, session (GET/DELETE)
-    api/invoices/      Shared invoice CRUD + edit locks
+    api/invoices/      Shared invoice list/delete + edit locks
+    api/v1/sync/save/  Versioned, idempotent, transactional invoice save
     api/shares/        Share-link management
     share/[token]/     Public read-only invoice page
   components/          Invoice template, dashboard, auth screen, share UI
@@ -160,6 +193,7 @@ src/
     invoice-utils.ts   Pricing and totals (the financial source of truth)
     invoice-normalize.ts  Sanitizer shared by the API and the client
     invoice-sync.ts    Cloud/local merge rules
+    sync/              Save queue (sync-manager), wire protocol, Ctrl+S shortcut
     invoice-pdf.ts     Canvas -> jsPDF A4 renderer (Bengali-safe)
   store/               Zustand stores (invoice editor, share modal, toasts)
 tests/                 Vitest suites (calculations, sanitizing, sync, auth, API routes, PDF helpers)

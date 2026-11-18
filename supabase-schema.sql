@@ -101,6 +101,175 @@ execute function public.set_smart_sign_updated_at();
 drop function if exists public.set_smart_sign_invoices_updated_at();
 
 -- ---------------------------------------------------------------------------
+-- Server save sync (POST /api/v1/sync/save)
+--
+--   * version: optimistic-locking counter, bumped on every save. A client sends the version it last saw;
+--     if the row has moved on, the save is rejected as a conflict instead of silently overwriting.
+--   * smart_sign_sync_receipts: one row per accepted syncId (idempotency key), so a retried request whose
+--     first attempt actually reached the database is answered from the receipt instead of saving twice.
+-- ---------------------------------------------------------------------------
+alter table public.smart_sign_invoices add column if not exists version integer not null default 1;
+
+create table if not exists public.smart_sign_sync_receipts (
+  sync_id text primary key,
+  invoice_id text not null references public.smart_sign_invoices(id) on delete cascade,
+  client_id text not null,
+  version integer not null,
+  server_updated_at timestamptz not null,
+  created_by text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists smart_sign_sync_receipts_invoice_created_idx
+  on public.smart_sign_sync_receipts (invoice_id, created_at);
+
+/*
+ * Saves one invoice in a single transaction (a plpgsql function body always runs atomically).
+ * Returns jsonb with "status" = saved | duplicate | conflict | locked.
+ *
+ * Concurrency: the existing row is locked FOR UPDATE before anything else, so two saves of the same invoice
+ * are serialized. The receipt lookup happens after the row lock, so a duplicate request that raced the
+ * original sees the original's receipt (READ COMMITTED re-reads per statement) and is answered as duplicate.
+ */
+drop function if exists public.smart_sign_save_invoice(text, text, text, text, text, jsonb, integer, integer);
+
+create or replace function public.smart_sign_save_invoice(
+  p_sync_id text,
+  p_invoice_id text,
+  p_client_id text,
+  p_username text,
+  p_name text,
+  p_invoice jsonb,
+  p_base_version integer,
+  p_lock_window_ms integer default 30000,
+  p_prior_sync_ids text[] default '{}'
+)
+returns jsonb
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_now timestamptz := now();
+  v_row record;
+  v_receipt record;
+  v_version integer;
+  v_created_by text;
+  v_exists boolean;
+  v_base integer := coalesce(p_base_version, 0);
+  v_own_versions integer;
+begin
+  select version, created_by, name, saved_at, invoice, lock_client_id, lock_username, lock_touched_at
+  into v_row
+  from public.smart_sign_invoices
+  where id = p_invoice_id
+  for update;
+  v_exists := found;
+
+  select version, server_updated_at, created_by, invoice_id into v_receipt
+  from public.smart_sign_sync_receipts
+  where sync_id = p_sync_id;
+
+  if found then
+    if v_receipt.invoice_id <> p_invoice_id then
+      raise exception 'sync id reused for another invoice' using errcode = '22023';
+    end if;
+
+    return jsonb_build_object('status', 'duplicate', 'version', v_receipt.version,
+      'server_updated_at', v_receipt.server_updated_at, 'created_by', v_receipt.created_by);
+  end if;
+
+  if not v_exists then
+    if v_base > 0 then
+      -- The client last saw a stored copy, but it is gone: deleted on another device.
+      return jsonb_build_object('status', 'conflict', 'reason', 'deleted', 'version', null);
+    end if;
+
+    insert into public.smart_sign_invoices
+      (id, client_id, name, saved_at, created_by, invoice, version, lock_client_id, lock_username, lock_touched_at)
+    values
+      (p_invoice_id, p_client_id, p_name, v_now, p_username, p_invoice, 1, p_client_id, p_username, v_now)
+    on conflict (id) do nothing
+    returning version, created_by into v_version, v_created_by;
+
+    if v_version is null then
+      -- Another request created it a moment ago. If that was this same sync (a racing duplicate), say so.
+      select version, server_updated_at, created_by into v_receipt
+      from public.smart_sign_sync_receipts where sync_id = p_sync_id;
+
+      if found then
+        return jsonb_build_object('status', 'duplicate', 'version', v_receipt.version,
+          'server_updated_at', v_receipt.server_updated_at, 'created_by', v_receipt.created_by);
+      end if;
+
+      return jsonb_build_object('status', 'conflict', 'reason', 'exists', 'version',
+        (select version from public.smart_sign_invoices where id = p_invoice_id));
+    end if;
+  else
+    if v_row.lock_client_id is not null
+       and v_row.lock_client_id <> p_client_id
+       and v_row.lock_touched_at is not null
+       and v_row.lock_touched_at > v_now - make_interval(secs => p_lock_window_ms / 1000.0) then
+      return jsonb_build_object('status', 'locked', 'locked_by', v_row.lock_username);
+    end if;
+
+    if v_base <> v_row.version then
+      -- A save whose response never reached the client still bumped the version. When every version
+      -- after the client's base came from this client's own unconfirmed syncIds, it is not a conflict.
+      select count(*) into v_own_versions
+      from public.smart_sign_sync_receipts
+      where invoice_id = p_invoice_id
+        and sync_id = any(coalesce(p_prior_sync_ids, '{}'))
+        and version > v_base;
+
+      if (v_base > v_row.version or v_own_versions <> v_row.version - v_base)
+         and v_row.invoice = p_invoice and v_row.name = p_name then
+        -- Same content as the server already holds (e.g. a client that lost track of the version):
+        -- nothing to overwrite, so not a conflict. Acknowledge without bumping the version.
+        insert into public.smart_sign_sync_receipts (sync_id, invoice_id, client_id, version, server_updated_at, created_by)
+        values (p_sync_id, p_invoice_id, p_client_id, v_row.version, v_row.saved_at, v_row.created_by)
+        on conflict (sync_id) do nothing;
+
+        return jsonb_build_object('status', 'saved', 'version', v_row.version,
+          'server_updated_at', v_row.saved_at, 'created_by', v_row.created_by);
+      end if;
+
+      if v_base > v_row.version or v_own_versions <> v_row.version - v_base then
+        return jsonb_build_object('status', 'conflict', 'reason', 'stale', 'version', v_row.version,
+        'server', jsonb_build_object('id', p_invoice_id, 'name', v_row.name, 'savedAt', v_row.saved_at,
+          'createdBy', v_row.created_by, 'invoice', v_row.invoice, 'version', v_row.version));
+      end if;
+    end if;
+
+    update public.smart_sign_invoices
+    set name = p_name,
+        saved_at = v_now,
+        invoice = p_invoice,
+        client_id = p_client_id,
+        version = v_row.version + 1,
+        lock_client_id = p_client_id,
+        lock_username = p_username,
+        lock_touched_at = v_now
+    where id = p_invoice_id
+    returning version, created_by into v_version, v_created_by;
+  end if;
+
+  insert into public.smart_sign_sync_receipts (sync_id, invoice_id, client_id, version, server_updated_at, created_by)
+  values (p_sync_id, p_invoice_id, p_client_id, v_version, v_now, v_created_by)
+  on conflict (sync_id) do nothing;
+
+  -- Receipts only need to outlive client retries; keep the table small.
+  delete from public.smart_sign_sync_receipts
+  where invoice_id = p_invoice_id and created_at < v_now - interval '7 days';
+
+  return jsonb_build_object('status', 'saved', 'version', v_version, 'server_updated_at', v_now, 'created_by', v_created_by);
+end;
+$$;
+
+-- Only the server (service_role) may call it.
+revoke all on function public.smart_sign_save_invoice(text, text, text, text, text, jsonb, integer, integer, text[]) from public, anon, authenticated;
+grant execute on function public.smart_sign_save_invoice(text, text, text, text, text, jsonb, integer, integer, text[]) to service_role;
+
+-- ---------------------------------------------------------------------------
 -- Public invoice sharing
 -- ---------------------------------------------------------------------------
 create table if not exists public.smart_sign_invoice_shares (
@@ -129,6 +298,7 @@ alter table public.smart_sign_users enable row level security;
 alter table public.smart_sign_login_otps enable row level security;
 alter table public.smart_sign_invoices enable row level security;
 alter table public.smart_sign_invoice_shares enable row level security;
+alter table public.smart_sign_sync_receipts enable row level security;
 
 -- Older versions of this file granted the anon key full access (including password hashes). Remove that.
 drop policy if exists smart_sign_users_select on public.smart_sign_users;
@@ -145,6 +315,7 @@ revoke all on public.smart_sign_users from anon, authenticated;
 revoke all on public.smart_sign_login_otps from anon, authenticated;
 revoke all on public.smart_sign_invoices from anon, authenticated;
 revoke all on public.smart_sign_invoice_shares from anon, authenticated;
+revoke all on public.smart_sign_sync_receipts from anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Optional housekeeping: remove OTP rows a day after they expire.

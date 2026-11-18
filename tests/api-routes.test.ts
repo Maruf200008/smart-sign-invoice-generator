@@ -6,6 +6,7 @@ import { createSampleInvoice } from "@/lib/sample-invoice";
 import * as authRoute from "@/app/api/auth/route";
 import * as invoicesRoute from "@/app/api/invoices/route";
 import * as sharesRoute from "@/app/api/shares/route";
+import * as syncSaveRoute from "@/app/api/v1/sync/save/route";
 import { apiRequest, installFakeSupabase, type RecordedRequest } from "./support/fake-supabase";
 
 vi.mock("@/lib/mailer", () => ({ sendOtpEmail: vi.fn(async () => undefined), isMailerConfigured: () => true }));
@@ -13,7 +14,6 @@ vi.mock("@/lib/mailer", () => ({ sendOtpEmail: vi.fn(async () => undefined), isM
 const USER = { id: "11111111-1111-4111-8111-111111111111", email: "rahim@example.com", username: "rahim" };
 const SESSION = sessionCookieHeader(USER).split(";")[0];
 const CLIENT_ID = "device-aaaa-1111";
-const OTHER_CLIENT = "device-bbbb-2222";
 
 let supabase: ReturnType<typeof installFakeSupabase>;
 
@@ -38,7 +38,7 @@ function savedInvoiceBody(id = "saved-invoice-abc-123") {
 describe("authentication is required", () => {
   it.each([
     ["GET /api/invoices", () => invoicesRoute.GET(apiRequest("/api/invoices"))],
-    ["POST /api/invoices", () => invoicesRoute.POST(apiRequest("/api/invoices", { method: "POST", body: savedInvoiceBody(), clientId: CLIENT_ID }))],
+    ["POST /api/v1/sync/save", () => syncSaveRoute.POST(apiRequest("/api/v1/sync/save", { method: "POST", body: savedInvoiceBody() }))],
     ["PATCH /api/invoices", () => invoicesRoute.PATCH(apiRequest("/api/invoices", { method: "PATCH", body: JSON.stringify({ id: "x" }), clientId: CLIENT_ID }))],
     ["DELETE /api/invoices", () => invoicesRoute.DELETE(apiRequest("/api/invoices?id=x", { method: "DELETE", clientId: CLIENT_ID }))],
     ["GET /api/shares", () => sharesRoute.GET(apiRequest("/api/shares?invoiceId=x"))],
@@ -78,70 +78,17 @@ describe("/api/invoices", () => {
     expect(data.invoices[0].invoice).not.toHaveProperty("activeLock");
   });
 
-  it("creates a new invoice with created_by taken from the session", async () => {
-    const response = await invoicesRoute.POST(
-      apiRequest("/api/invoices", { method: "POST", cookie: SESSION, clientId: CLIENT_ID, body: savedInvoiceBody(), headers: { "x-smart-sign-username": "mallory" } })
-    );
-
-    expect(response.status).toBe(200);
-    const [insert] = writes("POST", "smart_sign_invoices");
-    expect(insert.body).toMatchObject({ created_by: "rahim", lock_client_id: CLIENT_ID, lock_username: "rahim" });
-  });
-
-  it("refuses to overwrite an invoice another device is editing", async () => {
+  it("returns each invoice's server version so clients can save against it", async () => {
     supabase.on((request) =>
       request.method === "GET" && request.path === "smart_sign_invoices"
-        ? { body: [{ created_by: "karim", lock_client_id: OTHER_CLIENT, lock_username: "karim", lock_touched_at: new Date().toISOString() }] }
+        ? { body: [{ id: "a", name: "A", saved_at: "2026-01-01T00:00:00.000Z", created_by: "rahim", version: 7, invoice: {} }] }
         : undefined
     );
 
-    const response = await invoicesRoute.POST(apiRequest("/api/invoices", { method: "POST", cookie: SESSION, clientId: CLIENT_ID, body: savedInvoiceBody() }));
-    const data = await response.json();
+    const data = await (await invoicesRoute.GET(apiRequest("/api/invoices", { cookie: SESSION }))).json();
 
-    expect(response.status).toBe(409);
-    expect(data).toMatchObject({ locked: true });
-    expect(data.error).toContain("karim");
-    expect(writes("PATCH", "smart_sign_invoices")).toHaveLength(0);
-  });
-
-  it("updates an existing invoice with a conditional (lock-aware) write and keeps the original creator", async () => {
-    supabase.on((request) => {
-      if (request.method === "GET" && request.path === "smart_sign_invoices") return { body: [{ created_by: "karim", lock_client_id: null, lock_touched_at: null }] };
-      if (request.method === "PATCH" && request.path === "smart_sign_invoices") return { body: [{ id: "saved-invoice-abc-123" }] };
-      return undefined;
-    });
-
-    const response = await invoicesRoute.POST(apiRequest("/api/invoices", { method: "POST", cookie: SESSION, clientId: CLIENT_ID, body: savedInvoiceBody() }));
-
-    expect(response.status).toBe(200);
-    const [update] = writes("PATCH", "smart_sign_invoices");
-    expect(update.url.searchParams.get("or")).toContain(`lock_client_id.eq.${CLIENT_ID}`);
-    expect(update.body).toMatchObject({ created_by: "karim" });
-  });
-
-  it("rejects invalid bodies, bad ids and missing device ids", async () => {
-    const badId = await invoicesRoute.POST(apiRequest("/api/invoices", { method: "POST", cookie: SESSION, clientId: CLIENT_ID, body: savedInvoiceBody("bad,id") }));
-    const notJson = await invoicesRoute.POST(apiRequest("/api/invoices", { method: "POST", cookie: SESSION, clientId: CLIENT_ID, body: "{oops" }));
-    const noDevice = await invoicesRoute.POST(apiRequest("/api/invoices", { method: "POST", cookie: SESSION, body: savedInvoiceBody() }));
-
-    expect([badId.status, notJson.status, noDevice.status]).toEqual([400, 400, 400]);
-    expect(writes("POST", "smart_sign_invoices")).toHaveLength(0);
-  });
-
-  it("rejects oversized bodies", async () => {
-    const huge = JSON.stringify({ id: "x", invoice: { notes: "x".repeat(1_100_000) } });
-    const response = await invoicesRoute.POST(apiRequest("/api/invoices", { method: "POST", cookie: SESSION, clientId: CLIENT_ID, body: huge }));
-
-    expect(response.status).toBe(413);
-  });
-
-  it("blocks cross-site writes (CSRF)", async () => {
-    const response = await invoicesRoute.POST(
-      apiRequest("/api/invoices", { method: "POST", cookie: SESSION, clientId: CLIENT_ID, body: savedInvoiceBody(), headers: { origin: "https://evil.example" } })
-    );
-
-    expect(response.status).toBe(403);
-    expect(supabase.requests).toHaveLength(0);
+    expect(supabase.requests[0].url.searchParams.get("select")).toContain("version");
+    expect(data.invoices[0].version).toBe(7);
   });
 
   it("refreshes only the lock columns, never the invoice JSON", async () => {

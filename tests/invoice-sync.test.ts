@@ -43,6 +43,23 @@ describe("mergeCloudInvoices", () => {
     expect(mergeCloudInvoices(local, cloud, "a", NOW).map((invoice) => invoice.id).sort()).toEqual(["a", "c"]);
   });
 
+  it("keeps every invoice with queued (unsaved) edits, even when it isn't open and the cloud copy is newer", () => {
+    const local = [saved("a", "Open", "2026-06-01T11:00:00.000Z"), saved("pending", "Unsaved local edit", "2026-06-01T10:00:00.000Z")];
+    const cloud = [saved("a", "Open", "2026-06-01T11:00:00.000Z"), { ...saved("pending", "Newer cloud", "2026-06-01T11:30:00.000Z"), version: 9 }];
+
+    const merged = mergeCloudInvoices(local, cloud, "a", NOW, new Set(["pending"]));
+    const pending = merged.find((invoice) => invoice.id === "pending");
+
+    expect(pending?.invoice.customer.name).toBe("Unsaved local edit");
+    expect(pending?.version).toBe(9);
+  });
+
+  it("keeps a pending invoice that the cloud doesn't have yet", () => {
+    const merged = mergeCloudInvoices([saved("offline-new", "Made offline", "2026-06-01T11:00:00.000Z")], [], "other", NOW, new Set(["offline-new"]));
+
+    expect(merged.map((invoice) => invoice.id)).toEqual(["offline-new"]);
+  });
+
   it("sanitizes cloud data before it reaches the editor", () => {
     const cloud = [{ id: "x", name: "", savedAt: "2026-06-01T10:00:00.000Z", invoice: { items: "nope", customer: { name: "Rahim" } } }] as unknown as SavedInvoice[];
     const [merged] = mergeCloudInvoices([], cloud, "", NOW);

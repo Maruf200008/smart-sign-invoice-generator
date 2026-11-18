@@ -26,8 +26,13 @@ interface InvoiceStore {
   resetDraft: () => void;
   loadSavedInvoice: (id: string) => void;
   deleteSavedInvoice: (id: string) => void;
-  mergeSavedInvoices: (savedInvoices: SavedInvoice[]) => void;
-  loadCloudSavedInvoices: (savedInvoices: SavedInvoice[]) => void;
+  /** Merges a cloud poll; invoices in `pendingIds` have unsaved local edits and keep their local copy. */
+  mergeSavedInvoices: (savedInvoices: SavedInvoice[], pendingIds?: ReadonlySet<string>) => void;
+  loadCloudSavedInvoices: (savedInvoices: SavedInvoice[], pendingIds?: ReadonlySet<string>) => void;
+  /** Records the server's confirmation of a save (stored time, version, creator) without touching content. */
+  markInvoiceSynced: (confirmation: { documentId: string; version: number; serverUpdatedAt: string; createdBy: string }) => void;
+  /** Replaces the local copy with the server's (conflict resolved in the server's favour). */
+  applyServerInvoice: (savedInvoice: SavedInvoice) => void;
   undoLastChange: () => void;
   redoLastChange: () => void;
 }
@@ -50,19 +55,20 @@ function withRows(invoice: InvoiceData): InvoiceData {
   return items === invoice.items ? invoice : { ...invoice, items };
 }
 
-function createSavedInvoice(invoice: InvoiceData, id = uid("saved-invoice"), createdBy?: string): SavedInvoice {
+function createSavedInvoice(invoice: InvoiceData, id = uid("saved-invoice"), createdBy?: string, version?: number): SavedInvoice {
   return {
     id,
     name: savedInvoiceName(invoice),
     savedAt: new Date().toISOString(),
     ...(createdBy ? { createdBy } : {}),
+    ...(typeof version === "number" ? { version } : {}),
     invoice
   };
 }
 
 function upsertSavedInvoice(savedInvoices: SavedInvoice[], invoice: InvoiceData, activeSavedInvoiceId: string) {
   const existing = savedInvoices.find((item) => item.id === activeSavedInvoiceId);
-  const savedInvoice = createSavedInvoice(invoice, activeSavedInvoiceId, existing?.createdBy);
+  const savedInvoice = createSavedInvoice(invoice, activeSavedInvoiceId, existing?.createdBy, existing?.version);
   const nextSavedInvoices = savedInvoices.filter((item) => item.id !== activeSavedInvoiceId);
 
   return pruneSavedInvoices([savedInvoice, ...nextSavedInvoices]);
@@ -223,19 +229,19 @@ export const useInvoiceStore = create<InvoiceStore>()(
             ...nextUndoState(state)
           };
         }),
-      mergeSavedInvoices: (cloudInvoices) =>
+      mergeSavedInvoices: (cloudInvoices, pendingIds) =>
         set((state) => {
-          const nextSavedInvoices = mergeCloudInvoices(state.savedInvoices, cloudInvoices, state.activeSavedInvoiceId);
+          const nextSavedInvoices = mergeCloudInvoices(state.savedInvoices, cloudInvoices, state.activeSavedInvoiceId, Date.now(), pendingIds);
           return savedInvoiceListsAreEqual(state.savedInvoices, nextSavedInvoices) ? state : { savedInvoices: nextSavedInvoices };
         }),
-      loadCloudSavedInvoices: (cloudInvoices) =>
+      loadCloudSavedInvoices: (cloudInvoices, pendingIds) =>
         set((state) => {
           const localActive = state.savedInvoices.find((savedInvoice) => savedInvoice.id === state.activeSavedInvoiceId);
           const isUnsyncedBlank =
             Boolean(localActive) && isBlankInvoice(localActive!.invoice) && !cloudInvoices.some((savedInvoice) => savedInvoice.id === state.activeSavedInvoiceId);
           // Don't keep (and upload) an empty local draft on a device that is just signing in.
           const keepId = isUnsyncedBlank && cloudInvoices.length > 0 ? "" : state.activeSavedInvoiceId;
-          const nextSavedInvoices = mergeCloudInvoices(state.savedInvoices, cloudInvoices, keepId);
+          const nextSavedInvoices = mergeCloudInvoices(state.savedInvoices, cloudInvoices, keepId, Date.now(), pendingIds);
 
           if (nextSavedInvoices.length === 0) {
             const invoice = createSampleInvoice();
@@ -254,6 +260,30 @@ export const useInvoiceStore = create<InvoiceStore>()(
             redoHistory: [],
             undoGroup: null
           };
+        }),
+      markInvoiceSynced: ({ documentId, version, serverUpdatedAt, createdBy }) =>
+        set((state) => {
+          const index = state.savedInvoices.findIndex((savedInvoice) => savedInvoice.id === documentId);
+
+          if (index === -1) {
+            return state;
+          }
+
+          const savedInvoices = [...state.savedInvoices];
+          savedInvoices[index] = { ...savedInvoices[index], savedAt: serverUpdatedAt, version, createdBy: createdBy || savedInvoices[index].createdBy };
+          return { savedInvoices: pruneSavedInvoices(savedInvoices) };
+        }),
+      applyServerInvoice: (serverInvoice) =>
+        set((state) => {
+          const normalized = normalizeSavedInvoice(serverInvoice);
+          const savedInvoices = pruneSavedInvoices([normalized, ...state.savedInvoices.filter((savedInvoice) => savedInvoice.id !== normalized.id)]);
+
+          if (normalized.id !== state.activeSavedInvoiceId) {
+            return { savedInvoices };
+          }
+
+          // Taking the server copy is undoable like any other change to the open invoice.
+          return { savedInvoices, invoice: withRows(normalized.invoice), ...nextUndoState(state) };
         }),
       undoLastChange: () =>
         set((state) => {

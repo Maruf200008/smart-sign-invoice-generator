@@ -80,7 +80,7 @@ export function describeStorageError(error: SupabaseRequestError) {
     return "Cloud storage is not authorized. Set SUPABASE_SERVICE_ROLE_KEY to your Supabase secret (service_role) key.";
   }
 
-  if (error.hasCode("PGRST205") || error.hasCode("PGRST204") || error.hasCode("42703")) {
+  if (error.hasCode("PGRST202") || error.hasCode("PGRST205") || error.hasCode("PGRST204") || error.hasCode("42703")) {
     return "Database schema is out of date. Run supabase-schema.sql in the Supabase SQL Editor.";
   }
 

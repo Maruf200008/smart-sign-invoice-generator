@@ -29,21 +29,32 @@ export function normalizeSavedInvoice(savedInvoice: SavedInvoice): SavedInvoice 
 /**
  * Reconciles the cloud list with local state.
  *
- * The cloud list wins for every invoice except the one open in the editor: if the local copy of that invoice
- * is newer (edits not uploaded yet) or doesn't exist in the cloud yet, the local copy is kept. Previously the
- * poll replaced the whole list, which reverted in-flight edits and could then upload the stale cloud copy.
+ * The cloud list wins, except for:
+ *   - invoices with edits queued for upload (`pendingIds`): the local copy is always kept, so a poll never
+ *     reverts unsaved work. If the cloud copy moved on meanwhile, the save reports a version conflict.
+ *   - the invoice open in the editor: kept when its local copy is newer or not in the cloud yet.
  */
-export function mergeCloudInvoices(local: SavedInvoice[], cloud: SavedInvoice[], activeId: string, now = Date.now()) {
+export function mergeCloudInvoices(
+  local: SavedInvoice[],
+  cloud: SavedInvoice[],
+  activeId: string,
+  now = Date.now(),
+  pendingIds: ReadonlySet<string> = new Set()
+) {
   const merged = cloud.map(normalizeSavedInvoice);
-  const localActive = local.find((savedInvoice) => savedInvoice.id === activeId);
 
-  if (localActive) {
-    const index = merged.findIndex((savedInvoice) => savedInvoice.id === activeId);
+  for (const localInvoice of local) {
+    const isPending = pendingIds.has(localInvoice.id);
+
+    if (!isPending && localInvoice.id !== activeId) continue;
+
+    const index = merged.findIndex((savedInvoice) => savedInvoice.id === localInvoice.id);
 
     if (index === -1) {
-      merged.push(localActive);
-    } else if (timeOf(localActive.invoice.updatedAt) > timeOf(merged[index].invoice.updatedAt)) {
-      merged[index] = { ...localActive, createdBy: localActive.createdBy ?? merged[index].createdBy };
+      merged.push(localInvoice);
+    } else if (isPending || timeOf(localInvoice.invoice.updatedAt) > timeOf(merged[index].invoice.updatedAt)) {
+      const cloudCopy = merged[index];
+      merged[index] = { ...localInvoice, createdBy: localInvoice.createdBy ?? cloudCopy.createdBy, version: localInvoice.version ?? cloudCopy.version };
     }
   }
 
@@ -61,6 +72,7 @@ export function savedInvoiceListsAreEqual(first: SavedInvoice[], second: SavedIn
         invoice.name === other.name &&
         invoice.savedAt === other.savedAt &&
         invoice.createdBy === other.createdBy &&
+        invoice.version === other.version &&
         invoice.invoice.updatedAt === other.invoice.updatedAt
       );
     })

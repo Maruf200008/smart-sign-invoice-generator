@@ -1,10 +1,9 @@
 import { notifySessionExpired } from "@/lib/auth-client";
+import type { SyncTransport } from "@/lib/sync/sync-manager";
+import { CLIENT_ID_PATTERN, SYNC_SAVE_PATH, type SyncSaveResponse } from "@/lib/sync/sync-protocol";
 import type { SavedInvoice } from "@/types/invoice";
 
 const CLIENT_ID_KEY = "smart-sign-client-id";
-const CLIENT_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
-/** Browsers cap keepalive request bodies at 64 KB; larger saves on page close would be dropped anyway. */
-const KEEPALIVE_MAX_BYTES = 60 * 1024;
 
 let memoryClientId = "";
 
@@ -87,39 +86,26 @@ export async function loadCloudInvoices() {
   return parseResponse<{ configured: boolean; invoices: SavedInvoice[] }>(response, "Unable to load cloud invoices.");
 }
 
-export async function saveCloudInvoice(savedInvoice: SavedInvoice) {
-  const response = await fetch("/api/invoices", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: headers(true),
-    body: JSON.stringify(savedInvoice)
-  });
+/** Transport for the sync manager: POST /api/v1/sync/save. Throws only when the request never completed. */
+export const syncTransport: SyncTransport = {
+  async save(request, options = {}) {
+    const response = await fetch(SYNC_SAVE_PATH, {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+      keepalive: options.keepalive === true,
+      headers: headers(true),
+      body: JSON.stringify(request)
+    });
+    const body = (await response.json().catch(() => ({ success: false, message: `Save failed (HTTP ${response.status}).` }))) as SyncSaveResponse;
 
-  return parseResponse<{ configured: boolean; savedAt?: string; createdBy?: string }>(response, "Unable to save cloud invoice.");
-}
+    if (response.status === 401) {
+      notifySessionExpired();
+    }
 
-/** Best-effort save while the page is closing. Returns false when the payload is too big for a keepalive request. */
-export function saveCloudInvoiceBeforeUnload(savedInvoice: SavedInvoice) {
-  const body = JSON.stringify(savedInvoice);
-
-  if (new Blob([body]).size > KEEPALIVE_MAX_BYTES) {
-    return false;
+    return { status: response.status, body };
   }
-
-  void fetch("/api/invoices", {
-    method: "POST",
-    cache: "no-store",
-    credentials: "same-origin",
-    keepalive: true,
-    headers: headers(true),
-    body
-  }).catch(() => {
-    // The browser may cancel keepalive requests during shutdown.
-  });
-
-  return true;
-}
+};
 
 export async function touchCloudInvoiceLock(id: string) {
   const response = await fetch("/api/invoices", {
