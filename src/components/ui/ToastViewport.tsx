@@ -37,6 +37,18 @@ export function ToastViewport() {
             >
               {isError ? <XCircle className="size-5 shrink-0" aria-hidden="true" /> : <CheckCircle2 className="size-5 shrink-0" aria-hidden="true" />}
               <span className="min-w-0 flex-1">{toast.message}</span>
+              {toast.action && (
+                <button
+                  type="button"
+                  className="shrink-0 rounded-full border border-current px-3 py-1 text-xs font-black transition hover:bg-white/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
+                  onClick={() => {
+                    dismiss(toast.id);
+                    toast.action?.onClick();
+                  }}
+                >
+                  {toast.action.label}
+                </button>
+              )}
               <button
                 type="button"
                 aria-label="Dismiss notification"

@@ -62,6 +62,8 @@ export interface SavedInvoice {
   name: string;
   savedAt: string;
   createdBy?: string;
+  /** Server-side optimistic-locking version (absent until the invoice has been stored in the cloud). */
+  version?: number;
   invoice: InvoiceData;
 }
 

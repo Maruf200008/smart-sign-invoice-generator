@@ -1,7 +1,7 @@
 import { ApiError, assertSameOrigin, jsonResponse, readJsonBody, requireSessionUser } from "@/lib/api-http";
 import { SessionConfigError } from "@/lib/auth-session";
-import { isLockedByOther, writableByFilter } from "@/lib/invoice-lock";
-import { InvoiceValidationError, parseSavedInvoice, sanitizeInvoiceData, SAVED_INVOICE_ID_PATTERN } from "@/lib/invoice-normalize";
+import { writableByFilter } from "@/lib/invoice-lock";
+import { InvoiceValidationError, sanitizeInvoiceData, SAVED_INVOICE_ID_PATTERN } from "@/lib/invoice-normalize";
 import { describeStorageError, isSupabaseServiceConfigured, SupabaseRequestError, supabaseServiceRequest } from "@/lib/supabase-rest";
 import type { SavedInvoice } from "@/types/invoice";
 
@@ -11,7 +11,6 @@ export const revalidate = 0;
 const TABLE = "smart_sign_invoices";
 const RETENTION_MS = 365 * 24 * 60 * 60 * 1000;
 const MAX_LIST_ROWS = 1000;
-const MAX_INVOICE_BODY_BYTES = 1024 * 1024;
 const CLIENT_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
 
 interface InvoiceRow {
@@ -19,6 +18,7 @@ interface InvoiceRow {
   name: string;
   saved_at: string;
   created_by: string | null;
+  version: number | null;
   invoice: unknown;
   lock_client_id: string | null;
   lock_username: string | null;
@@ -49,6 +49,7 @@ function rowToSavedInvoice(row: InvoiceRow): SavedInvoice {
     name: row.name,
     savedAt: row.saved_at,
     createdBy: row.created_by ?? undefined,
+    ...(typeof row.version === "number" ? { version: row.version } : {}),
     invoice: sanitizeInvoiceData(row.invoice)
   };
 }
@@ -97,7 +98,7 @@ export async function GET(request: Request) {
 
     const cutoff = new Date(Date.now() - RETENTION_MS).toISOString();
     const rows = await supabaseServiceRequest<InvoiceRow[]>(
-      `${TABLE}?saved_at=gte.${encodeURIComponent(cutoff)}&select=id,name,saved_at,created_by,invoice&order=saved_at.desc&limit=${MAX_LIST_ROWS}`
+      `${TABLE}?saved_at=gte.${encodeURIComponent(cutoff)}&select=id,name,saved_at,created_by,version,invoice&order=saved_at.desc&limit=${MAX_LIST_ROWS}`
     );
 
     return jsonResponse({ configured: true, invoices: (rows ?? []).map(rowToSavedInvoice) });
@@ -106,60 +107,7 @@ export async function GET(request: Request) {
   }
 }
 
-/** POST /api/invoices -> create or update one invoice. Rejected with 409 while another device holds the lock. */
-export async function POST(request: Request) {
-  try {
-    assertSameOrigin(request);
-    const user = requireSessionUser(request);
-    const clientId = getClientId(request);
-
-    if (!isSupabaseServiceConfigured()) {
-      return jsonResponse({ configured: false });
-    }
-
-    const savedInvoice = parseSavedInvoice(await readJsonBody(request, MAX_INVOICE_BODY_BYTES));
-    const existing = await findRow(savedInvoice.id, "created_by,lock_client_id,lock_username,lock_touched_at");
-
-    if (isLockedByOther(existing, clientId)) {
-      return lockedResponse(existing);
-    }
-
-    const now = new Date().toISOString();
-    const row = {
-      id: savedInvoice.id,
-      client_id: clientId,
-      name: savedInvoice.name,
-      saved_at: now,
-      created_by: existing?.created_by || user.username,
-      invoice: savedInvoice.invoice,
-      lock_client_id: clientId,
-      lock_username: user.username,
-      lock_touched_at: now
-    };
-
-    if (existing) {
-      // Conditional update closes the gap between the lock check above and this write.
-      const updated = await supabaseServiceRequest<Array<{ id: string }>>(
-        `${TABLE}?id=eq.${encodeURIComponent(savedInvoice.id)}&${writableByFilter(clientId)}&select=id`,
-        { method: "PATCH", body: JSON.stringify(row) }
-      );
-
-      if (!updated?.length) {
-        return lockedResponse(await findRow(savedInvoice.id, "lock_username"));
-      }
-    } else {
-      await supabaseServiceRequest(`${TABLE}?on_conflict=id`, {
-        method: "POST",
-        headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify(row)
-      });
-    }
-
-    return jsonResponse({ configured: true, savedAt: now, createdBy: row.created_by });
-  } catch (error) {
-    return handleError(error);
-  }
-}
+// Saving goes through POST /api/v1/sync/save (versioned, idempotent, transactional).
 
 /** PATCH /api/invoices {id, release?} -> refresh (or release) this device's edit lock without touching invoice data. */
 export async function PATCH(request: Request) {

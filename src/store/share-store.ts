@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { saveCloudInvoice } from "@/lib/invoice-cloud-storage";
+import { saveInvoiceToServerNow } from "@/lib/sync/invoice-sync-client";
 import { ensureShare, updateShare } from "@/lib/share-client";
 import { toast } from "@/store/toast-store";
 import type { SavedInvoice } from "@/types/invoice";
@@ -43,12 +43,7 @@ export const useShareStore = create<ShareStore>((set, get) => ({
 
     try {
       // Make sure the cloud copy is current, because the public page renders from the database.
-      const saved = await saveCloudInvoice(savedInvoice);
-
-      if (!saved.configured) {
-        throw new Error("Sharing needs the cloud database. Add the Supabase keys to the server environment.");
-      }
-
+      await saveInvoiceToServerNow(savedInvoice);
       const share = await ensureShare({ invoiceId: savedInvoice.id });
 
       if (requestId === openRequestId) {

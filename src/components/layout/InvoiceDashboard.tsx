@@ -1,8 +1,8 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, Cloud, CloudOff, FileText, Loader2, Lock, LogOut, Plus, Search, Trash2, X } from "lucide-react";
-import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CloudOff, FileText, Loader2, Lock, LogOut, Plus, Search, Trash2, X } from "lucide-react";
+import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ActionButton } from "@/components/controls/ActionButton";
 import { BrandLoader } from "@/components/brand/BrandLoader";
 import { DownloadPdfButton } from "@/components/controls/DownloadPdfButton";
@@ -10,28 +10,22 @@ import { ShareButton } from "@/components/controls/ShareButton";
 import { ShareModal } from "@/components/share/ShareModal";
 import backgroundPattern from "@/assets/background_pattern.jpg";
 import { InvoicePreview } from "@/components/invoice/InvoicePreview";
-import {
-  deleteCloudInvoice,
-  InvoiceLockedError,
-  loadCloudInvoices,
-  releaseCloudInvoiceLock,
-  saveCloudInvoice,
-  saveCloudInvoiceBeforeUnload,
-  SessionExpiredError,
-  touchCloudInvoiceLock
-} from "@/lib/invoice-cloud-storage";
+import { deleteCloudInvoice, loadCloudInvoices, releaseCloudInvoiceLock, SessionExpiredError, touchCloudInvoiceLock } from "@/lib/invoice-cloud-storage";
 import { toInvoiceDocument } from "@/lib/invoice-document";
+import { createSaveShortcutHandler, saveShortcutLabel } from "@/lib/sync/save-shortcut";
+import { getInvoiceSyncManager } from "@/lib/sync/invoice-sync-client";
+import type { FlushOutcome, SyncStatus } from "@/lib/sync/sync-manager";
 import { useInvoiceStore } from "@/store/invoice-store";
 import { toast } from "@/store/toast-store";
 import type { AuthUser } from "@/types/auth";
 import type { SavedInvoice } from "@/types/invoice";
 
 const SAVED_INVOICE_PREVIEW_LIMIT = 10;
-const SAVE_DEBOUNCE_MS = 400;
+/** Edits are saved on Ctrl+S, when the page is left, and by this periodic auto-save — never per keystroke. */
+const AUTO_SAVE_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = 10_000;
 const LOCK_REFRESH_MS = 10_000;
-
-type SyncState = "local" | "saving" | "saved" | "locked" | "error";
+const SIGN_OUT_SAVE_TIMEOUT_MS = 3000;
 
 // Reads the latest invoice at click time, so the button never re-renders on edits.
 const getCurrentInvoiceDocument = () => toInvoiceDocument(useInvoiceStore.getState().invoice);
@@ -40,19 +34,28 @@ function isPageVisible() {
   return typeof document === "undefined" || document.visibilityState === "visible";
 }
 
+function withoutPeriod(message: string) {
+  return message.trim().replace(/\.+$/, "");
+}
+
+function activeSavedInvoiceSnapshot() {
+  const { savedInvoices, activeSavedInvoiceId } = useInvoiceStore.getState();
+  return savedInvoices.find((savedInvoice) => savedInvoice.id === activeSavedInvoiceId);
+}
+
 export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: AuthUser; onSignOut: () => void }) {
   const [isCloudReady, setIsCloudReady] = useState(false);
   const [isCloudEnabled, setIsCloudEnabled] = useState(false);
-  const [syncState, setSyncState] = useState<SyncState>("local");
+  const [lockedBy, setLockedBy] = useState<string | null | undefined>(undefined);
   const [showSavedInvoices, setShowSavedInvoices] = useState(false);
   const savedInvoiceSidebarRef = useRef<HTMLDivElement>(null);
   const savedInvoiceToggleRef = useRef<HTMLSpanElement>(null);
-  /** id -> invoice.updatedAt of the version known to be stored in the cloud. */
-  const syncedVersionsRef = useRef(new Map<string, string>());
-  /** Pending debounced saves, keyed by invoice id so switching invoices never drops an unsaved edit. */
-  const saveTimersRef = useRef(new Map<string, { timer: number; savedInvoice: SavedInvoice }>());
   const lockNoticeShownRef = useRef(new Set<string>());
   const refreshInFlightRef = useRef(false);
+  /** The first cloud load failed, so the next successful contact should merge the cloud list in. */
+  const needsCloudMergeRef = useRef(false);
+  const [syncManager] = useState(getInvoiceSyncManager);
+  const syncStatus = useSyncExternalStore(syncManager.subscribe, syncManager.getStatus, syncManager.getStatus);
   const resetDraft = useInvoiceStore((state) => state.resetDraft);
   const savedInvoices = useInvoiceStore((state) => state.savedInvoices);
   const activeSavedInvoiceId = useInvoiceStore((state) => state.activeSavedInvoiceId);
@@ -60,6 +63,7 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
   const deleteSavedInvoice = useInvoiceStore((state) => state.deleteSavedInvoice);
   const mergeSavedInvoices = useInvoiceStore((state) => state.mergeSavedInvoices);
   const loadCloudSavedInvoices = useInvoiceStore((state) => state.loadCloudSavedInvoices);
+  const applyServerInvoice = useInvoiceStore((state) => state.applyServerInvoice);
   const undoLastChange = useInvoiceStore((state) => state.undoLastChange);
   const redoLastChange = useInvoiceStore((state) => state.redoLastChange);
   const activeSavedInvoice = useMemo(
@@ -67,56 +71,14 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
     [activeSavedInvoiceId, savedInvoices]
   );
 
-  const recordCloudVersions = useCallback((cloudInvoices: SavedInvoice[]) => {
-    for (const savedInvoice of cloudInvoices) {
-      syncedVersionsRef.current.set(savedInvoice.id, savedInvoice.invoice.updatedAt);
-    }
-  }, []);
-
-  const showLockedNotice = useCallback((id: string, message: string) => {
-    setSyncState("locked");
+  const showLockedNotice = useCallback((id: string, who: string | null) => {
+    setLockedBy(who);
 
     if (!lockNoticeShownRef.current.has(id)) {
       lockNoticeShownRef.current.add(id);
-      toast.error(`${message} Your changes are kept on this device and will sync once it is free.`);
+      toast.error(`This invoice is open${who ? ` by ${who}` : ""} on another device. Your changes are kept on this device and will sync once it is free.`);
     }
   }, []);
-
-  const saveInvoice = useCallback(
-    async (savedInvoice: SavedInvoice) => {
-      setSyncState("saving");
-
-      try {
-        const result = await saveCloudInvoice(savedInvoice);
-
-        if (result.configured) {
-          syncedVersionsRef.current.set(savedInvoice.id, savedInvoice.invoice.updatedAt);
-          lockNoticeShownRef.current.delete(savedInvoice.id);
-          setSyncState("saved");
-        }
-      } catch (error) {
-        if (error instanceof InvoiceLockedError) {
-          showLockedNotice(savedInvoice.id, error.message);
-        } else if (!(error instanceof SessionExpiredError)) {
-          console.error("Unable to save cloud invoice.", error);
-          setSyncState("error");
-        }
-      }
-    },
-    [showLockedNotice]
-  );
-
-  const flushPendingSaves = useCallback(() => {
-    const pending = [...saveTimersRef.current.values()];
-    saveTimersRef.current.clear();
-
-    return Promise.all(
-      pending.map(({ timer, savedInvoice }) => {
-        window.clearTimeout(timer);
-        return saveInvoice(savedInvoice);
-      })
-    );
-  }, [saveInvoice]);
 
   const refreshCloudInvoices = useCallback(async () => {
     if (refreshInFlightRef.current || !isPageVisible()) {
@@ -129,8 +91,9 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
       const result = await loadCloudInvoices();
 
       if (result.configured) {
-        recordCloudVersions(result.invoices);
-        mergeSavedInvoices(result.invoices);
+        needsCloudMergeRef.current = false;
+        syncManager.recordServerCopies(result.invoices);
+        mergeSavedInvoices(result.invoices, syncManager.pendingIds());
       }
     } catch (error) {
       if (!(error instanceof SessionExpiredError)) {
@@ -139,7 +102,7 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
     } finally {
       refreshInFlightRef.current = false;
     }
-  }, [mergeSavedInvoices, recordCloudVersions]);
+  }, [mergeSavedInvoices, syncManager]);
 
   // Initial load: the cloud is the source of truth; local storage is the fallback when it is unavailable.
   useEffect(() => {
@@ -150,17 +113,24 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
         if (isCancelled) return;
 
         if (result.configured) {
-          recordCloudVersions(result.invoices);
-          loadCloudSavedInvoices(result.invoices);
+          syncManager.recordServerCopies(result.invoices);
+          loadCloudSavedInvoices(result.invoices, syncManager.pendingIds());
+          syncManager.setEnabled(true);
           setIsCloudEnabled(true);
-          setSyncState("saved");
+
+          // Edits queued in an earlier session (closed offline, crashed) go up now.
+          if (syncManager.getStatus().pendingCount > 0) void syncManager.flush();
+        } else {
+          syncManager.setEnabled(false);
         }
       })
       .catch((error) => {
         if (isCancelled || error instanceof SessionExpiredError) return;
         console.error("Unable to load cloud invoices.", error);
-        setSyncState("error");
-        toast.error("Couldn't reach cloud storage. You're working on this device's copy for now.");
+        // Keep syncing enabled: saves queue up locally and go out (and the list is merged) once the server answers.
+        needsCloudMergeRef.current = true;
+        setIsCloudEnabled(true);
+        toast.error("Couldn't reach cloud storage. You're working on this device's copy; changes will sync when it's back.");
       })
       .finally(() => {
         if (!isCancelled) setIsCloudReady(true);
@@ -169,7 +139,88 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
     return () => {
       isCancelled = true;
     };
-  }, [loadCloudSavedInvoices, recordCloudVersions]);
+  }, [loadCloudSavedInvoices, syncManager]);
+
+  // Every edit marks the open invoice dirty (local only). Nothing is sent until a save trigger fires.
+  useEffect(() => {
+    if (isCloudReady && activeSavedInvoice) {
+      syncManager.track(activeSavedInvoice);
+    }
+  }, [activeSavedInvoice, isCloudReady, syncManager]);
+
+  const saveNow = useCallback(async (): Promise<FlushOutcome> => {
+    const active = activeSavedInvoiceSnapshot();
+    if (active) syncManager.track(active);
+
+    const outcome = await syncManager.flush();
+
+    if (outcome.status === "saved" && needsCloudMergeRef.current) {
+      void refreshCloudInvoices();
+    }
+
+    return outcome;
+  }, [refreshCloudInvoices, syncManager]);
+
+  const saveWithFeedback = useCallback(async () => {
+    const outcome = await saveNow();
+
+    switch (outcome.status) {
+      case "saved":
+      case "nothing":
+        toast.success("Saved successfully");
+        break;
+      case "disabled":
+        toast.success("Saved on this device. Cloud storage isn't configured on the server.");
+        break;
+      case "conflict":
+        toast.error(`${withoutPeriod(outcome.conflict.message)}. Choose which copy to keep.`);
+        break;
+      case "failed":
+        if (outcome.error.kind !== "auth") {
+          toast.error(`Save failed (${withoutPeriod(outcome.error.message)}). Your changes are stored locally. Retry?`, {
+            action: { label: "Retry", onClick: () => void saveWithFeedbackRef.current() }
+          });
+        }
+        break;
+    }
+  }, [saveNow]);
+  const saveWithFeedbackRef = useRef(saveWithFeedback);
+  saveWithFeedbackRef.current = saveWithFeedback;
+
+  // Ctrl+S / Cmd+S saves straight to the server instead of opening the browser's "Save page" dialog.
+  useEffect(() => {
+    const handleSaveShortcut = createSaveShortcutHandler(() => void saveWithFeedbackRef.current());
+
+    window.addEventListener("keydown", handleSaveShortcut, true);
+    return () => window.removeEventListener("keydown", handleSaveShortcut, true);
+  }, []);
+
+  // Auto-save interval, reconnect retry, and saving when the page is hidden or closed.
+  useEffect(() => {
+    if (!isCloudEnabled) return;
+
+    syncManager.startAutoSave(AUTO_SAVE_INTERVAL_MS);
+
+    const onOnline = () => {
+      syncManager.handleOnline();
+      void refreshCloudInvoices();
+    };
+    const onHidden = () => {
+      if (document.visibilityState === "hidden" && syncManager.getStatus().pendingCount > 0) void syncManager.flush();
+    };
+    const onPageHide = () => syncManager.flushOnExit();
+
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onHidden);
+    window.addEventListener("pagehide", onPageHide);
+
+    return () => {
+      syncManager.dispose();
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [isCloudEnabled, refreshCloudInvoices, syncManager]);
 
   // Keep the list fresh, but only while the tab is visible (no background traffic).
   useEffect(() => {
@@ -193,13 +244,18 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
     if (!isCloudEnabled || !activeSavedInvoiceId) return;
 
     const id = activeSavedInvoiceId;
+    setLockedBy(undefined);
+
     const touchLock = () => {
       if (!isPageVisible()) return;
 
       touchCloudInvoiceLock(id)
         .then((result) => {
           if (result.locked) {
-            showLockedNotice(id, `This invoice is open${result.lockedBy ? ` by ${result.lockedBy}` : ""} on another device.`);
+            showLockedNotice(id, result.lockedBy ?? null);
+          } else {
+            lockNoticeShownRef.current.delete(id);
+            setLockedBy(undefined);
           }
         })
         .catch((error) => {
@@ -218,52 +274,24 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
     };
   }, [activeSavedInvoiceId, isCloudEnabled, showLockedNotice]);
 
-  // Debounced auto-save, triggered only when the open invoice's content actually changed.
-  useEffect(() => {
-    if (!isCloudEnabled || !activeSavedInvoice) return;
+  async function handleResolveConflict(choice: "keep-local" | "use-server") {
+    const conflict = syncStatus.conflict;
+    if (!conflict) return;
 
-    const { id } = activeSavedInvoice;
+    const serverCopy = await syncManager.resolveConflict(conflict.documentId, choice);
 
-    if (syncedVersionsRef.current.get(id) === activeSavedInvoice.invoice.updatedAt) {
-      return;
-    }
-
-    const existing = saveTimersRef.current.get(id);
-    if (existing) window.clearTimeout(existing.timer);
-
-    const timer = window.setTimeout(() => {
-      saveTimersRef.current.delete(id);
-      void saveInvoice(activeSavedInvoice);
-    }, SAVE_DEBOUNCE_MS);
-
-    saveTimersRef.current.set(id, { timer, savedInvoice: activeSavedInvoice });
-  }, [activeSavedInvoice, isCloudEnabled, saveInvoice]);
-
-  // Last-chance save of unsynced edits when the page is closed or hidden for good.
-  useEffect(() => {
-    if (!isCloudEnabled) return;
-
-    const timers = saveTimersRef.current;
-
-    function saveBeforeUnload() {
-      for (const { timer, savedInvoice } of timers.values()) {
-        window.clearTimeout(timer);
-
-        if (!saveCloudInvoiceBeforeUnload(savedInvoice)) {
-          console.warn("Invoice too large to save while closing; it is kept in this browser.");
-        }
+    if (choice === "use-server") {
+      if (serverCopy) {
+        applyServerInvoice(serverCopy);
+        toast.success("Loaded the server copy.");
+      } else {
+        deleteSavedInvoice(conflict.documentId);
+        toast.success("Removed the invoice that was deleted on another device.");
       }
-
-      timers.clear();
+    } else if (syncManager.getStatus().phase === "saved") {
+      toast.success("Saved successfully");
     }
-
-    window.addEventListener("pagehide", saveBeforeUnload);
-
-    return () => {
-      window.removeEventListener("pagehide", saveBeforeUnload);
-      for (const { timer } of timers.values()) window.clearTimeout(timer);
-    };
-  }, [isCloudEnabled]);
+  }
 
   useEffect(() => {
     const handleUndoShortcut = (event: KeyboardEvent) => {
@@ -339,10 +367,7 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
           await deleteCloudInvoice(id);
         }
 
-        const pending = saveTimersRef.current.get(id);
-        if (pending) window.clearTimeout(pending.timer);
-        saveTimersRef.current.delete(id);
-        syncedVersionsRef.current.delete(id);
+        syncManager.discard(id);
         deleteSavedInvoice(id);
         deletedCount += 1;
       } catch (error) {
@@ -359,15 +384,20 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
   }
 
   async function handleSignOut() {
-    await Promise.race([flushPendingSaves(), new Promise((resolve) => window.setTimeout(resolve, 3000))]);
+    if (isCloudEnabled) {
+      await Promise.race([saveNow(), new Promise((resolve) => window.setTimeout(resolve, SIGN_OUT_SAVE_TIMEOUT_MS))]);
+    }
 
     if (activeSavedInvoiceId && isCloudEnabled) {
       releaseCloudInvoiceLock(activeSavedInvoiceId);
     }
 
-    // The cloud keeps everything, so don't leave the shared invoice list behind in this browser.
-    if (isCloudEnabled) {
+    // The cloud keeps everything, so don't leave the shared invoice list behind in this browser —
+    // unless some edits never reached the server: then the local copy is all there is, so keep it.
+    if (isCloudEnabled && syncManager.getStatus().pendingCount === 0) {
       useInvoiceStore.persist.clearStorage();
+    } else if (syncManager.getStatus().pendingCount > 0) {
+      toast.error("Some changes haven't reached the server yet. They're kept on this device and will sync after you sign in again.");
     }
 
     onSignOut();
@@ -415,7 +445,13 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
           </ActionButton>
         </motion.div>
 
-        <SyncIndicator state={isCloudEnabled ? syncState : "local"} />
+        <SyncIndicator
+          status={syncStatus}
+          lockedBy={lockedBy}
+          onSave={() => void saveWithFeedback()}
+          onRetry={() => void saveWithFeedback()}
+          onResolveConflict={(choice) => void handleResolveConflict(choice)}
+        />
 
         <AnimatePresence>
           {showSavedInvoices && (
@@ -449,20 +485,125 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
   );
 }
 
-function SyncIndicator({ state }: { state: SyncState }) {
-  const content: Record<SyncState, { icon: JSX.Element; label: string; className: string }> = {
-    local: { icon: <CloudOff className="size-3.5" aria-hidden="true" />, label: "Saved on this device only", className: "text-zinc-500" },
-    saving: { icon: <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />, label: "Saving…", className: "text-zinc-500" },
-    saved: { icon: <Cloud className="size-3.5" aria-hidden="true" />, label: "All changes saved", className: "text-zinc-500" },
-    locked: { icon: <Lock className="size-3.5" aria-hidden="true" />, label: "Open on another device — changes kept here", className: "text-amber-700" },
-    error: { icon: <CloudOff className="size-3.5" aria-hidden="true" />, label: "Cloud sync failed — changes kept on this device", className: "text-red-700" }
+function useNow(intervalMs: number) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), intervalMs);
+    return () => window.clearInterval(id);
+  }, [intervalMs]);
+
+  return now;
+}
+
+function savedAgo(lastSavedAt: number | null, now: number) {
+  if (lastSavedAt === null) return "All changes saved";
+
+  const seconds = Math.max(0, Math.round((now - lastSavedAt) / 1000));
+  if (seconds < 45) return "Saved just now";
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `Saved ${minutes} min ago`;
+
+  return `Saved at ${new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(lastSavedAt)}`;
+}
+
+const DOT_CLASS = {
+  amber: "bg-amber-400",
+  blue: "bg-sky-500",
+  green: "bg-emerald-500",
+  red: "bg-red-600",
+  gray: "bg-zinc-400"
+} as const;
+
+function StatusDot({ tone }: { tone: keyof typeof DOT_CLASS }) {
+  return <span aria-hidden="true" className={`inline-block size-2 shrink-0 rounded-full ${DOT_CLASS[tone]}`} />;
+}
+
+function IndicatorButton({ children, onClick }: { children: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="rounded-full border border-current px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition hover:bg-white/70"
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** Save status: 🟡 Unsaved changes · 🔵 Saving… · 🟢 Saved just now · 🔴 Sync failed – Retry · conflict choices. */
+function SyncIndicator({
+  status,
+  lockedBy,
+  onSave,
+  onRetry,
+  onResolveConflict
+}: {
+  status: SyncStatus;
+  /** undefined: not locked; null/name: another device holds the edit lock. */
+  lockedBy: string | null | undefined;
+  onSave: () => void;
+  onRetry: () => void;
+  onResolveConflict: (choice: "keep-local" | "use-server") => void;
+}) {
+  const now = useNow(15_000);
+  const base = "no-print -mt-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[11px] font-bold sm:-mt-3";
+
+  if (status.phase === "conflict" && status.conflict) {
+    const deleted = status.conflict.reason === "deleted";
+
+    return (
+      <div role="alert" className={`${base} text-red-700`}>
+        <StatusDot tone="red" />
+        <span>{deleted ? "This invoice was deleted on another device" : "Newer version exists on server"}</span>
+        <IndicatorButton onClick={() => onResolveConflict("keep-local")}>{deleted ? "Restore mine" : "Keep mine"}</IndicatorButton>
+        <IndicatorButton onClick={() => onResolveConflict("use-server")}>{deleted ? "Discard mine" : "Use server copy"}</IndicatorButton>
+      </div>
+    );
+  }
+
+  if (status.phase === "error") {
+    const offline = status.error?.kind === "offline";
+
+    return (
+      <div role="alert" className={`${base} text-red-700`}>
+        <StatusDot tone="red" />
+        <span>{offline ? "Offline — changes stored on this device" : "Sync failed"}</span>
+        {status.error?.message && !offline && <span className="font-semibold text-red-600">({status.error.message})</span>}
+        <IndicatorButton onClick={onRetry}>Retry</IndicatorButton>
+      </div>
+    );
+  }
+
+  if (lockedBy !== undefined && (status.phase === "dirty" || status.phase === "saved")) {
+    return (
+      <p role="status" aria-live="polite" className={`${base} text-amber-700`}>
+        <Lock className="size-3.5" aria-hidden="true" />
+        Open{lockedBy ? ` by ${lockedBy}` : ""} on another device — changes kept here
+      </p>
+    );
+  }
+
+  const labels: Record<"disabled" | "saving" | "dirty" | "saved", { dot: JSX.Element; label: string; className: string }> = {
+    disabled: { dot: <CloudOff className="size-3.5" aria-hidden="true" />, label: "Saved on this device only", className: "text-zinc-500" },
+    saving: { dot: <Loader2 className="size-3.5 animate-spin text-sky-600" aria-hidden="true" />, label: "Saving…", className: "text-sky-700" },
+    dirty: { dot: <StatusDot tone="amber" />, label: "Unsaved changes", className: "text-amber-700" },
+    saved: { dot: <StatusDot tone="green" />, label: savedAgo(status.lastSavedAt, now), className: "text-emerald-700" }
   };
-  const { icon, label, className } = content[state];
+  // "conflict" without details can't happen; fall back to the saved look rather than crash.
+  const phase = status.phase === "conflict" ? "saved" : status.phase;
+  const content = labels[phase];
 
   return (
-    <p role="status" aria-live="polite" className={`no-print -mt-2 flex items-center gap-1.5 text-[11px] font-bold sm:-mt-3 ${className}`}>
-      {icon}
-      {label}
+    <p role="status" aria-live="polite" className={`${base} ${content.className}`}>
+      {content.dot}
+      {content.label}
+      {status.phase === "dirty" && (
+        <button type="button" className="font-black underline-offset-2 hover:underline" onClick={onSave} title="Save to the server now">
+          Save ({saveShortcutLabel()})
+        </button>
+      )}
     </p>
   );
 }
