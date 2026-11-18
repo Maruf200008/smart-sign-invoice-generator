@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
 
 const config: Config = {
   darkMode: "class",
@@ -20,12 +21,21 @@ const config: Config = {
         premium: "0 24px 80px rgba(18, 18, 18, 0.12)"
       },
       fontFamily: {
-        sans: ["var(--font-inter)", "var(--font-noto-bengali)", "system-ui", "sans-serif"],
-        bangla: ["var(--font-noto-bengali)", "system-ui", "sans-serif"]
+        // UI chrome: Inter for Latin, then the bundled Bengali chain (--invoice-font, defined in font-registry.ts).
+        sans: ["var(--font-inter)", "var(--invoice-font)"],
+        bangla: ["var(--invoice-font)"],
+        // The invoice itself: one font chain shared with the PDF engine.
+        invoice: ["var(--invoice-font)"]
       }
     }
   },
-  plugins: []
+  plugins: [
+    // `sysdark:` applies when the OS prefers dark OR an ancestor has `.dark`. Used by the share UI so it follows the
+    // system theme without changing how the existing `dark:` (class-only) styles behave on the light-only dashboard.
+    plugin(({ addVariant }) => {
+      addVariant("sysdark", ["@media (prefers-color-scheme: dark)", ".dark &"]);
+    })
+  ]
 };
 
 export default config;

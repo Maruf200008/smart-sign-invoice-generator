@@ -1,5 +1,5 @@
 import type { InvoiceData } from "@/types/invoice";
-import { createBlankItem, formatLocalDateInput, generateInvoiceNumber } from "@/lib/invoice-utils";
+import { formatLocalDateInput, generateInvoiceNumber, withMinimumRows } from "@/lib/invoice-utils";
 
 export function createSampleInvoice(): InvoiceData {
   return {
@@ -19,7 +19,7 @@ export function createSampleInvoice(): InvoiceData {
       invoiceNumber: generateInvoiceNumber(),
       date: formatLocalDateInput()
     },
-    items: Array.from({ length: 15 }, () => createBlankItem()),
+    items: withMinimumRows([]),
     advance: 0,
     discount: 0,
     taxRate: 0,

@@ -1,4 +1,9 @@
+import { ROWS_PER_PAGE } from "@/lib/invoice-sheet/pagination";
 import type { CurrencyCode, InvoiceData, InvoiceItem, InvoiceTotals } from "@/types/invoice";
+
+/** The subset of an item needed for pricing, so shared (id-less) items can reuse the same math. */
+export type LineItemInput = Pick<InvoiceItem, "width" | "height" | "quantity" | "unitPrice" | "total" | "totalIsManual">;
+type TotalsInput = Pick<InvoiceData, "discount" | "taxRate" | "advance"> & { items: LineItemInput[] };
 
 export const currencySymbols: Record<CurrencyCode, string> = {
   BDT: "৳",
@@ -65,6 +70,11 @@ export function toDateInputValue(value: string) {
   return "";
 }
 
+/** Pads an invoice's rows with blank ones so it always has at least one full page (12 rows) to type into. */
+export function withMinimumRows(items: InvoiceItem[], minimum = ROWS_PER_PAGE): InvoiceItem[] {
+  return items.length >= minimum ? items : [...items, ...Array.from({ length: minimum - items.length }, () => createBlankItem())];
+}
+
 export function createBlankItem(): InvoiceItem {
   return {
     id: uid("item"),
@@ -79,7 +89,7 @@ export function createBlankItem(): InvoiceItem {
   };
 }
 
-export function lineSqf(item: InvoiceItem) {
+export function lineSqf(item: LineItemInput) {
   if (hasPositiveValue(item.width) && hasPositiveValue(item.height)) {
     return calculateSqf(item.width, item.height) ?? 0;
   }
@@ -87,14 +97,14 @@ export function lineSqf(item: InvoiceItem) {
   return 0;
 }
 
-export function lineQuantitySqf(item: InvoiceItem) {
+export function lineQuantitySqf(item: LineItemInput) {
   const sqf = lineSqf(item);
   const quantity = safePositiveNumber(item.quantity) || 1;
 
   return roundToTwo(sqf * quantity);
 }
 
-export function lineTotal(item: InvoiceItem) {
+export function lineTotal(item: LineItemInput) {
   if (item.totalIsManual) {
     return roundToInteger(safePositiveNumber(item.total));
   }
@@ -110,7 +120,7 @@ export function calculateSqf(width: unknown, height: unknown) {
   return roundToTwo(safePositiveNumber(width) * safePositiveNumber(height));
 }
 
-export function calculateLineTotal(item: InvoiceItem) {
+export function calculateLineTotal(item: LineItemInput) {
   const rate = safePositiveNumber(item.unitPrice);
 
   if (!rate) {
@@ -135,13 +145,52 @@ export function calculateLineTotal(item: InvoiceItem) {
   return 0;
 }
 
-export function calculateTotals(invoice: InvoiceData): InvoiceTotals {
-  const subtotal = invoice.items.reduce((sum, item) => sum + lineTotal(item), 0);
-  const discount = Math.min(safeNumber(invoice.discount), subtotal);
-  const taxable = Math.max(subtotal - discount, 0);
-  const tax = taxable * (safeNumber(invoice.taxRate) / 100);
-  const grandTotal = taxable + tax;
-  const advance = Math.min(safeNumber(invoice.advance), grandTotal);
+/**
+ * Applies an edit to one row and keeps its derived fields right: a new size recalculates SQF, a new size,
+ * quantity or rate recalculates the total (dropping a manual total), a typed total becomes a manual override, and
+ * `totalIsManual: false` restores the calculated total.
+ */
+export function applyItemPatch(item: InvoiceItem, patch: Partial<InvoiceItem>): InvoiceItem {
+  const nextItem = { ...item, ...patch };
+  const sizeChanged = "width" in patch || "height" in patch;
+  const calculationChanged = sizeChanged || "quantity" in patch || "unitPrice" in patch;
+
+  if (sizeChanged) {
+    nextItem.sqf = calculateSqf(nextItem.width, nextItem.height);
+  }
+
+  if (calculationChanged) {
+    nextItem.totalIsManual = false;
+    nextItem.total = calculateLineTotal(nextItem);
+  }
+
+  if ("total" in patch && !calculationChanged) {
+    nextItem.totalIsManual = true;
+  }
+
+  if ("totalIsManual" in patch && patch.totalIsManual === false) {
+    nextItem.total = calculateLineTotal(nextItem);
+  }
+
+  return nextItem;
+}
+
+export const MAX_TAX_RATE = 100;
+
+/**
+ * Invoice totals. Order: subtotal -> discount (capped at subtotal) -> VAT/tax on the discounted amount ->
+ * grand total -> advance (capped at grand total) -> remaining.
+ * Negative inputs are treated as 0 and every money value is rounded to 2 decimals, so float noise such as
+ * 1150.0000000000002 can never leak into a printed total.
+ */
+export function calculateTotals(invoice: TotalsInput): InvoiceTotals {
+  const subtotal = roundToTwo(invoice.items.reduce((sum, item) => sum + lineTotal(item), 0));
+  const discount = roundToTwo(Math.min(safePositiveNumber(invoice.discount), subtotal));
+  const taxable = roundToTwo(Math.max(subtotal - discount, 0));
+  const taxRate = Math.min(safePositiveNumber(invoice.taxRate), MAX_TAX_RATE);
+  const tax = roundToTwo((taxable * taxRate) / 100);
+  const grandTotal = roundToTwo(taxable + tax);
+  const advance = roundToTwo(Math.min(safePositiveNumber(invoice.advance), grandTotal));
 
   return {
     subtotal,
@@ -150,7 +199,7 @@ export function calculateTotals(invoice: InvoiceData): InvoiceTotals {
     tax,
     grandTotal,
     advance,
-    remaining: Math.max(grandTotal - advance, 0)
+    remaining: roundToTwo(Math.max(grandTotal - advance, 0))
   };
 }
 
@@ -160,12 +209,14 @@ export function formatDecimal(value: number) {
   }).format(Number.isFinite(value) ? value : 0);
 }
 
+/** "৳1,150" for whole amounts, "৳1,150.50" otherwise (decided on the rounded value, not raw float noise). */
 export function formatMoney(value: number, currency: CurrencyCode) {
-  const symbol = currencySymbols[currency];
+  const symbol = currencySymbols[currency] ?? "";
+  const amount = roundToTwo(value);
   return `${symbol}${new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
-    minimumFractionDigits: value % 1 === 0 ? 0 : 2
-  }).format(Number.isFinite(value) ? value : 0)}`;
+    minimumFractionDigits: Number.isInteger(amount) ? 0 : 2
+  }).format(amount)}`;
 }
 
 export function safeNumber(value: unknown) {
@@ -181,8 +232,10 @@ export function safePositiveNumber(value: unknown) {
   return Math.max(safeNumber(value), 0);
 }
 
+/** Rounds half away from zero to 2 decimals; the EPSILON nudge makes 1.005 round to 1.01 rather than 1.00. */
 export function roundToTwo(value: number) {
-  return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+  const finite = Number.isFinite(value) ? value : 0;
+  return (Math.sign(finite) * Math.round(Math.abs(finite) * 100 + Number.EPSILON * 100)) / 100 || 0;
 }
 
 export function roundToInteger(value: number) {
@@ -209,11 +262,3 @@ export function roundPositiveInput(value: string) {
   return roundToTwo(safePositiveNumber(value));
 }
 
-export function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}

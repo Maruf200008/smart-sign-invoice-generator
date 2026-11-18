@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
-import { Inter, Noto_Sans_Bengali } from "next/font/google";
+import { Inter } from "next/font/google";
+import { ToastViewport } from "@/components/ui/ToastViewport";
+import { buildInvoiceFontCss, PRIMARY_FONT_FILES } from "@/lib/fonts/font-registry";
 import "./globals.css";
 
 const inter = Inter({
@@ -7,15 +9,13 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
-const notoBengali = Noto_Sans_Bengali({
-  subsets: ["bengali"],
-  variable: "--font-noto-bengali",
-});
+// Self-hosted @font-face rules for the invoice's Bengali/Latin font chain (see font-registry.ts).
+const invoiceFontCss = buildInvoiceFontCss();
 
 export const metadata: Metadata = {
   title: "Smart Sign Invoice",
   description:
-    "Premium A4 invoice generator with live editing, PDF export, print layout, and Bangla support.",
+    "A4 invoice generator with live editing, one-click PDF download and full Bangla support.",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: "/fav_icon.svg",
@@ -34,10 +34,16 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${inter.variable} ${notoBengali.variable} font-sans antialiased`}
-      >
+      <head>
+        {/* The primary invoice font is needed for the first paint of every invoice; fetch it with the HTML. */}
+        {PRIMARY_FONT_FILES.map((file) => (
+          <link key={file.url} rel="preload" href={file.url} as="font" type="font/ttf" crossOrigin="anonymous" />
+        ))}
+        <style dangerouslySetInnerHTML={{ __html: invoiceFontCss }} />
+      </head>
+      <body className={`${inter.variable} font-sans antialiased`}>
         {children}
+        <ToastViewport />
       </body>
     </html>
   );

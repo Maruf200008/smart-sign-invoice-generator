@@ -18,6 +18,7 @@ export const invoiceLabels = {
     grandTotal: "Grand Total",
     advance: "Advance",
     remaining: "Remaining:",
+    inWords: "In Words:",
     signature: "Signature",
     toggleButton: "Bangla Invoice"
   },
@@ -40,6 +41,7 @@ export const invoiceLabels = {
     grandTotal: "সর্বমোট",
     advance: "অগ্রিম",
     remaining: "বাকি:",
+    inWords: "কথায়:",
     signature: "স্বাক্ষর",
     toggleButton: "English Invoice"
   }

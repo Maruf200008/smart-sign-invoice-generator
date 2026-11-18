@@ -1,77 +1,91 @@
 import type { AuthUser } from "@/types/auth";
 
-const AUTH_USER_KEY = "smart-sign-auth-user";
+/** Older versions stored the user object here and trusted it; it is no longer used for anything. */
+const LEGACY_AUTH_USER_KEY = "smart-sign-auth-user";
+export const SESSION_EXPIRED_EVENT = "smart-sign:session-expired";
 
-export function getStoredAuthUser() {
-  if (typeof window === "undefined") {
-    return null;
-  }
+interface AuthResponse {
+  user?: AuthUser | null;
+  ok?: boolean;
+  error?: string;
+}
 
-  const rawUser = window.localStorage.getItem(AUTH_USER_KEY);
+async function readJson(response: Response): Promise<AuthResponse> {
+  return (await response.json().catch(() => ({}))) as AuthResponse;
+}
 
-  if (!rawUser) {
-    return null;
-  }
-
+function clearLegacyUser() {
   try {
-    return JSON.parse(rawUser) as AuthUser;
+    window.localStorage.removeItem(LEGACY_AUTH_USER_KEY);
   } catch {
-    window.localStorage.removeItem(AUTH_USER_KEY);
-    return null;
+    // Storage can be unavailable (private mode); nothing to clean up then.
   }
 }
 
-export function storeAuthUser(user: AuthUser) {
-  window.localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+/** Asks the server who is signed in. Returns null when there is no valid session cookie. */
+export async function fetchCurrentUser(): Promise<AuthUser | null> {
+  clearLegacyUser();
+  const response = await fetch("/api/auth", { cache: "no-store", credentials: "same-origin" });
+
+  if (response.status === 401) {
+    return null;
+  }
+
+  const data = await readJson(response);
+
+  if (!response.ok) {
+    throw new Error(data.error || "Unable to check your session.");
+  }
+
+  return data.user ?? null;
 }
 
-export function clearStoredAuthUser() {
-  window.localStorage.removeItem(AUTH_USER_KEY);
+export async function signOutUser() {
+  await fetch("/api/auth", { method: "DELETE", credentials: "same-origin" }).catch(() => undefined);
 }
 
-export async function signupUser(input: { email: string; username: string; password: string }) {
+/** Lets any API caller report an expired session so the app returns to the sign-in screen. */
+export function notifySessionExpired() {
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+}
+
+export function signupUser(input: { email: string; username: string; password: string }) {
   return authRequest("signup", input);
 }
 
-export async function loginUser(input: { identifier: string; password: string }) {
+export function loginUser(input: { identifier: string; password: string }) {
   return authRequest("login", input);
 }
 
 export async function requestLoginOtp(input: { username: string; email: string }) {
-  const response = await fetch("/api/auth", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ action: "request-otp", ...input })
-  });
-  const data = (await response.json()) as { ok?: boolean; error?: string };
+  const response = await postAuth({ action: "request-otp", ...input });
+  const data = await readJson(response);
 
   if (!response.ok || !data.ok) {
     throw new Error(data.error || "Unable to send OTP.");
   }
-
-  return data;
 }
 
-export async function verifyLoginOtp(input: { username: string; email: string; otp: string }) {
+export function verifyLoginOtp(input: { username: string; email: string; otp: string }) {
   return authRequest("verify-otp", input);
 }
 
-async function authRequest(action: "signup" | "login" | "verify-otp", body: Record<string, string>) {
-  const response = await fetch("/api/auth", {
+function postAuth(body: Record<string, string>) {
+  return fetch("/api/auth", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ action, ...body })
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
   });
-  const data = (await response.json()) as { user?: AuthUser; error?: string };
+}
+
+async function authRequest(action: "signup" | "login" | "verify-otp", body: Record<string, string>) {
+  const response = await postAuth({ action, ...body });
+  const data = await readJson(response);
 
   if (!response.ok || !data.user) {
     throw new Error(data.error || "Authentication failed.");
   }
 
-  storeAuthUser(data.user);
   return data.user;
 }

@@ -1,22 +1,49 @@
 "use client";
 
-import { InvoiceFooter } from "@/components/invoice/InvoiceFooter";
 import { InvoiceHeader } from "@/components/invoice/InvoiceHeader";
 import { InvoiceSummary } from "@/components/invoice/InvoiceSummary";
-import { InvoiceTable } from "@/components/invoice/InvoiceTable";
+import { InvoiceTable, useInvoiceGrid } from "@/components/invoice/InvoiceTable";
+import { RowVisibilityProvider } from "@/components/invoice/row-visibility";
+import { InvoicePages, SheetViewport } from "@/components/invoice/sheet/InvoiceSheet";
+import { SheetPageFooter } from "@/components/invoice/sheet/SheetParts";
+import { getInvoiceLabels } from "@/lib/invoice-labels";
+import { paginateInvoiceRows } from "@/lib/invoice-sheet/pagination";
 
+/**
+ * The editable A4 invoice. Same pages, parts and page heights as the PDF, so what you edit is what you download:
+ * 12 rows per page, header, table head and signature/contact footer on every page, totals on the last page only.
+ */
 export function InvoicePreview() {
   return (
-    <article
-      id="invoice-paper"
-      className="invoice-paper relative mx-auto flex min-h-[auto] w-full max-w-[210mm] flex-col overflow-hidden rounded bg-white text-[#222] shadow-[0_8px_40px_rgba(0,0,0,0.18)] sm:min-h-[297mm] sm:w-[210mm] sm:shrink-0"
-    >
-      <div className="relative z-10 flex min-h-[auto] flex-col sm:min-h-[297mm]">
+    <RowVisibilityProvider>
+      <SheetViewport>
+        <div id="invoice-paper" className="invoice-paper">
+          <EditablePages />
+        </div>
+      </SheetViewport>
+    </RowVisibilityProvider>
+  );
+}
+
+function EditablePages() {
+  const { rows, overlay } = useInvoiceGrid();
+  const labels = getInvoiceLabels();
+
+  const pages = paginateInvoiceRows(rows.length).map((page) => ({
+    key: String(page.index),
+    content: (
+      <>
         <InvoiceHeader />
-        <InvoiceTable />
-        <InvoiceSummary />
-        <InvoiceFooter />
-      </div>
-    </article>
+        <InvoiceTable rows={rows.slice(page.start, page.end)} continued={!page.isFirst} />
+        {page.isLast ? <InvoiceSummary /> : <SheetPageFooter labels={labels} />}
+      </>
+    )
+  }));
+
+  return (
+    <>
+      <InvoicePages ariaLabel="Invoice editor" printable pages={pages} />
+      {overlay}
+    </>
   );
 }

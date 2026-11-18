@@ -88,79 +88,205 @@ input[type="number"]::-webkit-inner-spin-button {
   width: 9px;
 }
 
-.invoice-paper {
+/* ---------- A4 invoice sheet ---------- */
+
+.invoice-sheet {
   print-color-adjust: exact;
   -webkit-print-color-adjust: exact;
+  font-kerning: normal;
+  /* Never fake bold/italic: every weight comes from the real (variable) font, same as in the PDF. */
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+
+  /* Vertical spacing of the original A4 design ("normal": up to a handful of items). */
+  --inv-table-mt: 16px;
+  --inv-th-py: 10px;
+  --inv-td-py: 10px;
+  --inv-table-pb: 20px;
+  --inv-sum-py: 8px;
+  --inv-sum-pb: 20px;
+  --inv-rem-py: 10px;
+  --inv-rem-pb: 28px;
+  --inv-foot-pt: 20px;
+  --inv-foot-pb: 38px;
+  --inv-sig-mb: 28px;
+  --inv-contact-mt: 20px;
+  --inv-contact-gap: 6px;
+  --inv-contact-lh: 1.35;
 }
 
+/* The original design's tighter tiers, used when that keeps the invoice on a single page. */
+.invoice-sheet[data-density="compact"] {
+  --inv-table-mt: 8px;
+  --inv-th-py: 6px;
+  --inv-td-py: 6px;
+  --inv-table-pb: 12px;
+  --inv-sum-py: 4px;
+  --inv-sum-pb: 12px;
+  --inv-rem-py: 6px;
+  --inv-rem-pb: 16px;
+  --inv-foot-pt: 8px;
+  --inv-foot-pb: 26px;
+  --inv-sig-mb: 16px;
+  --inv-contact-mt: 12px;
+  --inv-contact-gap: 4px;
+}
+
+.invoice-sheet[data-density="dense"] {
+  --inv-table-mt: 8px;
+  --inv-th-py: 4px;
+  --inv-td-py: 4px;
+  --inv-table-pb: 8px;
+  --inv-sum-py: 4px;
+  --inv-sum-pb: 8px;
+  --inv-rem-py: 4px;
+  --inv-rem-pb: 8px;
+  --inv-foot-pt: 0px;
+  --inv-foot-pb: 14px;
+  --inv-sig-mb: 8px;
+  --inv-contact-mt: 6px;
+  --inv-contact-gap: 0px;
+  --inv-contact-lh: 1.2;
+}
+
+/* On screen each A4 page is its own sheet of paper, stacked with a gap like a print preview. */
+.sheet-viewport .invoice-sheet-paper {
+  border-radius: 2px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.18);
+}
+
+.sheet-viewport .invoice-pages {
+  gap: 24px;
+}
+
+/* A4 pages. Only if a page's content can't fit A4 does the sheet add its own, taller @page rule. */
 @page {
-  size: A4;
+  size: A4 portrait;
   margin: 0;
 }
 
+/* Ctrl+P fallback. The Download PDF button is the primary path; this prints the same A4 pages. */
 @media print {
   html,
   body {
-    width: 210mm;
-    height: 297mm;
-    margin: 0 !important;
-    background: #ffffff !important;
-    overflow: hidden !important;
-  }
-
-  body * {
-    visibility: hidden;
-  }
-
-  main,
-  main > div,
-  main > div > section {
-    min-height: 0 !important;
-    width: 210mm !important;
-    height: 297mm !important;
     margin: 0 !important;
     padding: 0 !important;
-    overflow: hidden !important;
+    min-height: 0 !important;
     background: #ffffff !important;
+  }
+
+  body *:not(:has(#invoice-paper)):not(#invoice-paper):not(#invoice-paper *) {
+    display: none !important;
+  }
+
+  body *:has(#invoice-paper) {
+    position: static !important;
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
     box-shadow: none !important;
+    opacity: 1 !important;
+    overflow: visible !important;
+    transform: none !important;
   }
 
   .no-print {
     display: none !important;
   }
 
-  #invoice-paper,
-  #invoice-paper * {
-    visibility: visible;
+  .sheet-viewport-frame {
+    width: auto !important;
+    height: auto !important;
   }
 
-  #invoice-paper {
-    position: fixed;
-    inset: 0;
-    width: 210mm !important;
-    min-height: 297mm !important;
-    height: 297mm !important;
-    margin: 0 !important;
+  .sheet-viewport-inner {
+    transform: none !important;
+  }
+
+  .invoice-sheet-paper {
     border-radius: 0 !important;
     box-shadow: none !important;
-    overflow: hidden !important;
   }
 
-  #invoice-paper > .relative.z-10 {
-    min-height: 297mm !important;
+  .invoice-pages {
+    gap: 0 !important;
   }
 
-  #invoice-paper > img:last-of-type {
-    width: 62mm !important;
+  /* Each sheet is exactly one printed page (its size is set by the sheet); the browser never splits a sheet. */
+  .invoice-sheet {
+    min-height: var(--sheet-print-height, 297mm) !important;
+    break-inside: avoid;
   }
 
-  #invoice-paper footer {
-    overflow: visible !important;
-    padding-top: 1mm !important;
-    padding-bottom: 6mm !important;
+  .invoice-sheet:not([data-last-page]) {
+    break-after: page;
   }
 
-  #invoice-paper .invoice-remaining-section {
-    padding-bottom: 2mm !important;
+  .invoice-sheet tr {
+    break-inside: avoid;
+  }
+
+  /* Pages already repeat their own table head, so the browser must not repeat it a second time. */
+  .invoice-sheet thead {
+    display: table-row-group;
+  }
+}
+
+/* ---------- Spreadsheet item grid (editor only) ----------
+ * Selection states are screen-only and never change a cell's size, so the editor keeps the exact printed layout.
+ * Inset shadows draw the active-cell frame inside the cell instead of with borders.
+ */
+@media screen {
+  .invoice-grid-td {
+    cursor: cell;
+  }
+
+  .invoice-grid-td[data-selected] {
+    background-color: #fdeced;
+  }
+
+  .invoice-grid-td[data-copied] {
+    background-image: repeating-linear-gradient(90deg, #e01b24 0 4px, transparent 4px 8px),
+      repeating-linear-gradient(90deg, #e01b24 0 4px, transparent 4px 8px);
+    background-position: top left, bottom left;
+    background-repeat: repeat-x;
+    background-size: 100% 1px;
+  }
+
+  .invoice-grid-td[data-active] {
+    box-shadow: inset 0 0 0 2px #e01b24;
+  }
+
+  .invoice-grid-td[data-editing] {
+    background-color: #ffffff;
+    box-shadow: inset 0 0 0 2px #e01b24, 0 0 0 3px rgba(224, 27, 36, 0.16);
+  }
+
+  .invoice-grid-row-head {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .invoice-grid-row-head[data-row-selected] {
+    background-color: #fdeced;
+    color: #e01b24;
+  }
+
+  .invoice-grid-input {
+    cursor: inherit;
+    outline: none;
+  }
+
+  .invoice-grid-input:read-only {
+    caret-color: transparent;
+  }
+
+  .invoice-grid-input:not(:read-only) {
+    cursor: text;
   }
 }

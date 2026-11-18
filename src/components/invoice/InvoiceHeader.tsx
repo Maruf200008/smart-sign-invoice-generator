@@ -1,13 +1,15 @@
 "use client";
 
-import smartSignLogo from "@/assets/smart_sign_logo.svg";
 import { CalendarDays } from "lucide-react";
-import { formatInvoiceDate, toDateInputValue } from "@/lib/invoice-utils";
+import { type KeyboardEvent, useRef } from "react";
+import { AutoGrowTextarea } from "@/components/invoice/sheet/AutoGrowTextarea";
+import { SheetBanner, SheetMetaRow, SheetTitleRow, SheetToRow } from "@/components/invoice/sheet/SheetParts";
 import { getInvoiceLabels } from "@/lib/invoice-labels";
+import { formatInvoiceDate, toDateInputValue } from "@/lib/invoice-utils";
 import { useInvoiceStore } from "@/store/invoice-store";
 import type { InvoiceData } from "@/types/invoice";
-import Image from "next/image";
-import { useRef } from "react";
+
+const fieldClass = "outline-none focus:bg-[#fff8f8]";
 
 export function InvoiceHeader() {
   const invoice = useInvoiceStore((state) => state.invoice);
@@ -19,158 +21,92 @@ export function InvoiceHeader() {
 
   return (
     <header>
-      <div className="bg-[#231f20] px-4 pb-4 pt-8 sm:px-12 sm:pb-6 sm:pt-12">
-        <div className="flex min-h-[88px] items-end justify-end sm:min-h-[130px]">
-          <Image
-            src={smartSignLogo}
-            alt="Smart Sign Color Lab"
-            width={430}
-            height={122}
-            priority
-            className="h-auto w-[300px] object-contain sm:w-[430px]"
+      <SheetBanner />
+
+      <SheetTitleRow title={labels.invoice}>
+        <SheetMetaRow as="label" label={labels.slNo}>
+          <AutoGrowTextarea
+            aria-label={labels.slNo}
+            className={fieldClass}
+            value={invoice.customer.invoiceNumber}
+            onKeyDown={blurOnEnter}
+            onChange={(event) => updateCustomer("invoiceNumber", event.target.value)}
           />
-        </div>
-      </div>
+        </SheetMetaRow>
+        <DateMetaField
+          label={labels.date}
+          value={formatInvoiceDate(invoice.customer.date)}
+          onChange={(value) => updateCustomer("date", value)}
+        />
+      </SheetTitleRow>
 
-      <div className="px-4 pb-4 pt-5 sm:px-10 sm:pb-5 sm:pt-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <h1 className="font-sans text-[34px] font-black uppercase leading-none tracking-normal text-[#e01b24] sm:text-[42px]">
-            {labels.invoice}
-          </h1>
-
-          <div className="grid gap-1.5 sm:w-auto">
-            <MetaField
-              label={labels.slNo}
-              value={invoice.customer.invoiceNumber}
-              onChange={(value) => updateCustomer("invoiceNumber", value)}
-            />
-            <DateMetaField
-              label={labels.date}
-              value={formatInvoiceDate(invoice.customer.date)}
-              onChange={(value) => updateCustomer("date", value)}
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center gap-1.5 px-4 pb-4 sm:px-10">
-        <span className="min-w-8 text-[15px] font-bold">{labels.to}</span>
-        <Editable
-          className="flex-1 px-1 py-1 text-[15px] font-bold outline-none"
+      <SheetToRow label={labels.to}>
+        <AutoGrowTextarea
+          aria-label="Customer name"
+          className={fieldClass}
           placeholder={labels.enterTo}
           value={invoice.customer.name}
-          onChange={(value) => updateCustomer("name", value)}
+          onKeyDown={blurOnEnter}
+          onChange={(event) => updateCustomer("name", event.target.value)}
         />
-      </div>
+      </SheetToRow>
     </header>
   );
 }
 
-function DateMetaField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
+function blurOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    event.currentTarget.blur();
+  }
+}
+
+function DateMetaField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   const dateInputRef = useRef<HTMLInputElement>(null);
 
   function openDatePicker() {
-    const dateInput = dateInputRef.current;
+    const pickerInput = dateInputRef.current as (HTMLInputElement & { showPicker?: () => void }) | null;
+    if (!pickerInput) return;
 
-    if (!dateInput) {
-      return;
-    }
-
-    const pickerInput = dateInput as HTMLInputElement & { showPicker?: () => void };
-
-    if (pickerInput.showPicker) {
-      pickerInput.showPicker();
-      return;
+    try {
+      if (pickerInput.showPicker) {
+        pickerInput.showPicker();
+        return;
+      }
+    } catch {
+      // showPicker throws without a user gesture in some browsers; fall back to a click.
     }
 
     pickerInput.click();
   }
 
   return (
-    <div className="flex items-center border-[1.5px] border-[#1a1a1a] bg-white">
-      <span className="min-w-14 border-r-[1.5px] border-[#1a1a1a] px-2.5 py-1 text-xs font-semibold">
-        {label}
-      </span>
+    <SheetMetaRow label={label}>
       <input
-        className="min-w-0 flex-1 cursor-pointer border-0 bg-white px-2.5 py-1 text-xs outline-none sm:w-32 sm:flex-none"
+        aria-label={`${label} (click to choose)`}
+        className={`block h-[1.4em] w-full cursor-pointer border-0 bg-transparent p-0 ${fieldClass}`}
         value={value}
         readOnly
         onClick={openDatePicker}
       />
+      {/* Positioned over the cell edge so it takes no layout space: the cell is the same size as in the PDF. */}
       <button
         type="button"
         aria-label="Choose invoice date"
-        className="no-print relative grid min-w-10 cursor-pointer place-items-center border-l-[1.5px] border-[#1a1a1a] px-2 py-1 text-[#1a1a1a]"
+        className="no-print absolute inset-y-0 right-0 grid w-[40px] cursor-pointer place-items-center border-l-[1.5px] border-[#1a1a1a] text-[#1a1a1a] hover:text-[#e01b24]"
         onClick={openDatePicker}
       >
-        <CalendarDays className="size-3.5" aria-hidden="true" />
+        <CalendarDays className="size-[14px]" aria-hidden="true" />
       </button>
       <input
         ref={dateInputRef}
-        aria-label={label}
-        className="pointer-events-none absolute size-px opacity-0"
+        tabIndex={-1}
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-0 left-0 size-px opacity-0"
         type="date"
         value={toDateInputValue(value)}
         onChange={(event) => onChange(formatInvoiceDate(event.target.value))}
       />
-    </div>
-  );
-}
-
-function MetaField({
-  label,
-  value,
-  type = "text",
-  placeholder,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  type?: string;
-  placeholder?: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="flex items-center border-[1.5px] border-[#1a1a1a] bg-white">
-      <span className="min-w-14 border-r-[1.5px] border-[#1a1a1a] px-2.5 py-1 text-xs font-semibold">
-        {label}
-      </span>
-      <input
-        className="min-w-0 flex-1 border-0 bg-white px-2.5 py-1 text-xs outline-none sm:w-40 sm:flex-none"
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    </label>
-  );
-}
-
-function Editable({
-  value,
-  onChange,
-  className,
-  placeholder,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  className?: string;
-  placeholder?: string;
-}) {
-  return (
-    <input
-      className={`border-0 bg-transparent outline-none ${className ?? ""}`}
-      placeholder={placeholder}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    />
+    </SheetMetaRow>
   );
 }

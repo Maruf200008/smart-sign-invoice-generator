@@ -1,28 +1,59 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertTriangle, FileText, LogOut, Plus, Search, Trash2, Wand2, X } from "lucide-react";
+import { AlertTriangle, Cloud, CloudOff, FileText, Loader2, Lock, LogOut, Plus, Search, Trash2, X } from "lucide-react";
 import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActionButton } from "@/components/controls/ActionButton";
 import { BrandLoader } from "@/components/brand/BrandLoader";
-import { PrintButton } from "@/components/controls/PrintButton";
+import { DownloadPdfButton } from "@/components/controls/DownloadPdfButton";
+import { ShareButton } from "@/components/controls/ShareButton";
+import { ShareModal } from "@/components/share/ShareModal";
 import backgroundPattern from "@/assets/background_pattern.jpg";
 import { InvoicePreview } from "@/components/invoice/InvoicePreview";
-import { deleteCloudInvoice, loadCloudInvoices, saveCloudInvoice, saveCloudInvoiceBeforeUnload, touchCloudInvoiceLock } from "@/lib/invoice-cloud-storage";
+import {
+  deleteCloudInvoice,
+  InvoiceLockedError,
+  loadCloudInvoices,
+  releaseCloudInvoiceLock,
+  saveCloudInvoice,
+  saveCloudInvoiceBeforeUnload,
+  SessionExpiredError,
+  touchCloudInvoiceLock
+} from "@/lib/invoice-cloud-storage";
+import { toInvoiceDocument } from "@/lib/invoice-document";
 import { useInvoiceStore } from "@/store/invoice-store";
+import { toast } from "@/store/toast-store";
 import type { AuthUser } from "@/types/auth";
+import type { SavedInvoice } from "@/types/invoice";
 
 const SAVED_INVOICE_PREVIEW_LIMIT = 10;
+const SAVE_DEBOUNCE_MS = 400;
+const POLL_INTERVAL_MS = 10_000;
+const LOCK_REFRESH_MS = 10_000;
+
+type SyncState = "local" | "saving" | "saved" | "locked" | "error";
+
+// Reads the latest invoice at click time, so the button never re-renders on edits.
+const getCurrentInvoiceDocument = () => toInvoiceDocument(useInvoiceStore.getState().invoice);
+
+function isPageVisible() {
+  return typeof document === "undefined" || document.visibilityState === "visible";
+}
 
 export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: AuthUser; onSignOut: () => void }) {
-  const [isMounted, setIsMounted] = useState(false);
   const [isCloudReady, setIsCloudReady] = useState(false);
+  const [isCloudEnabled, setIsCloudEnabled] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>("local");
   const [showSavedInvoices, setShowSavedInvoices] = useState(false);
   const savedInvoiceSidebarRef = useRef<HTMLDivElement>(null);
   const savedInvoiceToggleRef = useRef<HTMLSpanElement>(null);
-  const invoice = useInvoiceStore((state) => state.invoice);
+  /** id -> invoice.updatedAt of the version known to be stored in the cloud. */
+  const syncedVersionsRef = useRef(new Map<string, string>());
+  /** Pending debounced saves, keyed by invoice id so switching invoices never drops an unsaved edit. */
+  const saveTimersRef = useRef(new Map<string, { timer: number; savedInvoice: SavedInvoice }>());
+  const lockNoticeShownRef = useRef(new Set<string>());
+  const refreshInFlightRef = useRef(false);
   const resetDraft = useInvoiceStore((state) => state.resetDraft);
-  const newInvoiceNumber = useInvoiceStore((state) => state.newInvoiceNumber);
   const savedInvoices = useInvoiceStore((state) => state.savedInvoices);
   const activeSavedInvoiceId = useInvoiceStore((state) => state.activeSavedInvoiceId);
   const loadSavedInvoice = useInvoiceStore((state) => state.loadSavedInvoice);
@@ -30,147 +61,233 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
   const mergeSavedInvoices = useInvoiceStore((state) => state.mergeSavedInvoices);
   const loadCloudSavedInvoices = useInvoiceStore((state) => state.loadCloudSavedInvoices);
   const undoLastChange = useInvoiceStore((state) => state.undoLastChange);
-  const refreshCloudInvoices = useCallback(() => {
-    return loadCloudInvoices()
-      .then((result) => {
-        if (result.configured) {
-          mergeSavedInvoices(result.invoices);
-        }
-      })
-      .catch((error) => {
-        console.error("Unable to load cloud invoices.", error);
-        // Local storage remains the fallback when cloud sync is unavailable.
-      });
-  }, [mergeSavedInvoices]);
+  const redoLastChange = useInvoiceStore((state) => state.redoLastChange);
+  const activeSavedInvoice = useMemo(
+    () => savedInvoices.find((savedInvoice) => savedInvoice.id === activeSavedInvoiceId),
+    [activeSavedInvoiceId, savedInvoices]
+  );
 
-  useEffect(() => {
-    setIsMounted(true);
+  const recordCloudVersions = useCallback((cloudInvoices: SavedInvoice[]) => {
+    for (const savedInvoice of cloudInvoices) {
+      syncedVersionsRef.current.set(savedInvoice.id, savedInvoice.invoice.updatedAt);
+    }
   }, []);
 
-  useEffect(() => {
-    if (!isMounted) {
+  const showLockedNotice = useCallback((id: string, message: string) => {
+    setSyncState("locked");
+
+    if (!lockNoticeShownRef.current.has(id)) {
+      lockNoticeShownRef.current.add(id);
+      toast.error(`${message} Your changes are kept on this device and will sync once it is free.`);
+    }
+  }, []);
+
+  const saveInvoice = useCallback(
+    async (savedInvoice: SavedInvoice) => {
+      setSyncState("saving");
+
+      try {
+        const result = await saveCloudInvoice(savedInvoice);
+
+        if (result.configured) {
+          syncedVersionsRef.current.set(savedInvoice.id, savedInvoice.invoice.updatedAt);
+          lockNoticeShownRef.current.delete(savedInvoice.id);
+          setSyncState("saved");
+        }
+      } catch (error) {
+        if (error instanceof InvoiceLockedError) {
+          showLockedNotice(savedInvoice.id, error.message);
+        } else if (!(error instanceof SessionExpiredError)) {
+          console.error("Unable to save cloud invoice.", error);
+          setSyncState("error");
+        }
+      }
+    },
+    [showLockedNotice]
+  );
+
+  const flushPendingSaves = useCallback(() => {
+    const pending = [...saveTimersRef.current.values()];
+    saveTimersRef.current.clear();
+
+    return Promise.all(
+      pending.map(({ timer, savedInvoice }) => {
+        window.clearTimeout(timer);
+        return saveInvoice(savedInvoice);
+      })
+    );
+  }, [saveInvoice]);
+
+  const refreshCloudInvoices = useCallback(async () => {
+    if (refreshInFlightRef.current || !isPageVisible()) {
       return;
     }
 
+    refreshInFlightRef.current = true;
+
+    try {
+      const result = await loadCloudInvoices();
+
+      if (result.configured) {
+        recordCloudVersions(result.invoices);
+        mergeSavedInvoices(result.invoices);
+      }
+    } catch (error) {
+      if (!(error instanceof SessionExpiredError)) {
+        console.warn("Unable to refresh cloud invoices.", error);
+      }
+    } finally {
+      refreshInFlightRef.current = false;
+    }
+  }, [mergeSavedInvoices, recordCloudVersions]);
+
+  // Initial load: the cloud is the source of truth; local storage is the fallback when it is unavailable.
+  useEffect(() => {
     let isCancelled = false;
 
     loadCloudInvoices()
       .then((result) => {
-        if (isCancelled) {
-          return;
-        }
+        if (isCancelled) return;
 
         if (result.configured) {
+          recordCloudVersions(result.invoices);
           loadCloudSavedInvoices(result.invoices);
+          setIsCloudEnabled(true);
+          setSyncState("saved");
         }
       })
       .catch((error) => {
+        if (isCancelled || error instanceof SessionExpiredError) return;
         console.error("Unable to load cloud invoices.", error);
+        setSyncState("error");
+        toast.error("Couldn't reach cloud storage. You're working on this device's copy for now.");
       })
       .finally(() => {
-        if (!isCancelled) {
-          setIsCloudReady(true);
-        }
+        if (!isCancelled) setIsCloudReady(true);
       });
 
     return () => {
       isCancelled = true;
     };
-  }, [isMounted, loadCloudSavedInvoices]);
+  }, [loadCloudSavedInvoices, recordCloudVersions]);
 
+  // Keep the list fresh, but only while the tab is visible (no background traffic).
   useEffect(() => {
-    if (!isMounted || !isCloudReady) {
-      return;
-    }
+    if (!isCloudEnabled) return;
 
-    const intervalId = window.setInterval(() => {
-      refreshCloudInvoices();
-    }, 4000);
+    const intervalId = window.setInterval(() => void refreshCloudInvoices(), POLL_INTERVAL_MS);
+    const onVisible = () => {
+      if (isPageVisible()) void refreshCloudInvoices();
+    };
 
-    return () => window.clearInterval(intervalId);
-  }, [isCloudReady, isMounted, refreshCloudInvoices]);
+    document.addEventListener("visibilitychange", onVisible);
 
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [isCloudEnabled, refreshCloudInvoices]);
+
+  // Hold the edit lock for the open invoice while this tab is visible; release it when switching away.
   useEffect(() => {
-    if (!isMounted || !isCloudReady || !activeSavedInvoiceId) {
-      return;
-    }
+    if (!isCloudEnabled || !activeSavedInvoiceId) return;
 
+    const id = activeSavedInvoiceId;
     const touchLock = () => {
-      touchCloudInvoiceLock(activeSavedInvoiceId, currentUser.username).catch((error) => {
-        console.error("Unable to refresh invoice lock.", error);
-      });
+      if (!isPageVisible()) return;
+
+      touchCloudInvoiceLock(id)
+        .then((result) => {
+          if (result.locked) {
+            showLockedNotice(id, `This invoice is open${result.lockedBy ? ` by ${result.lockedBy}` : ""} on another device.`);
+          }
+        })
+        .catch((error) => {
+          if (!(error instanceof SessionExpiredError)) console.warn("Unable to refresh invoice lock.", error);
+        });
     };
 
     touchLock();
-    const intervalId = window.setInterval(touchLock, 10_000);
+    const intervalId = window.setInterval(touchLock, LOCK_REFRESH_MS);
+    document.addEventListener("visibilitychange", touchLock);
 
-    return () => window.clearInterval(intervalId);
-  }, [activeSavedInvoiceId, currentUser.username, isCloudReady, isMounted]);
+    return () => {
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", touchLock);
+      releaseCloudInvoiceLock(id);
+    };
+  }, [activeSavedInvoiceId, isCloudEnabled, showLockedNotice]);
 
+  // Debounced auto-save, triggered only when the open invoice's content actually changed.
   useEffect(() => {
-    if (!isMounted || !isCloudReady || !activeSavedInvoiceId) {
+    if (!isCloudEnabled || !activeSavedInvoice) return;
+
+    const { id } = activeSavedInvoice;
+
+    if (syncedVersionsRef.current.get(id) === activeSavedInvoice.invoice.updatedAt) {
       return;
     }
 
-    const activeSavedInvoice = savedInvoices.find((savedInvoice) => savedInvoice.id === activeSavedInvoiceId);
+    const existing = saveTimersRef.current.get(id);
+    if (existing) window.clearTimeout(existing.timer);
 
-    if (!activeSavedInvoice) {
-      return;
-    }
+    const timer = window.setTimeout(() => {
+      saveTimersRef.current.delete(id);
+      void saveInvoice(activeSavedInvoice);
+    }, SAVE_DEBOUNCE_MS);
 
-    const timeoutId = window.setTimeout(() => {
-      saveCloudInvoice(activeSavedInvoice, currentUser.username)
-        .then(() => refreshCloudInvoices())
-        .catch((error) => {
-          console.error("Unable to save cloud invoice.", error);
-          // Keep local auto-save working even if database sync fails.
-        });
-    }, 250);
+    saveTimersRef.current.set(id, { timer, savedInvoice: activeSavedInvoice });
+  }, [activeSavedInvoice, isCloudEnabled, saveInvoice]);
 
-    return () => window.clearTimeout(timeoutId);
-  }, [activeSavedInvoiceId, currentUser.username, isCloudReady, isMounted, refreshCloudInvoices, savedInvoices]);
-
+  // Last-chance save of unsynced edits when the page is closed or hidden for good.
   useEffect(() => {
-    if (!isMounted || !isCloudReady || !activeSavedInvoiceId) {
-      return;
-    }
+    if (!isCloudEnabled) return;
 
-    const activeSavedInvoice = savedInvoices.find((savedInvoice) => savedInvoice.id === activeSavedInvoiceId);
-
-    if (!activeSavedInvoice) {
-      return;
-    }
-
-    const invoiceToSave = activeSavedInvoice;
+    const timers = saveTimersRef.current;
 
     function saveBeforeUnload() {
-      saveCloudInvoiceBeforeUnload(invoiceToSave, currentUser.username);
+      for (const { timer, savedInvoice } of timers.values()) {
+        window.clearTimeout(timer);
+
+        if (!saveCloudInvoiceBeforeUnload(savedInvoice)) {
+          console.warn("Invoice too large to save while closing; it is kept in this browser.");
+        }
+      }
+
+      timers.clear();
     }
 
-    window.addEventListener("beforeunload", saveBeforeUnload);
     window.addEventListener("pagehide", saveBeforeUnload);
 
     return () => {
-      window.removeEventListener("beforeunload", saveBeforeUnload);
       window.removeEventListener("pagehide", saveBeforeUnload);
+      for (const { timer } of timers.values()) window.clearTimeout(timer);
     };
-  }, [activeSavedInvoiceId, currentUser.username, isCloudReady, isMounted, savedInvoices]);
+  }, [isCloudEnabled]);
 
   useEffect(() => {
     const handleUndoShortcut = (event: KeyboardEvent) => {
-      const isUndoKey = event.key.toLowerCase() === "z" && (event.ctrlKey || event.metaKey) && !event.shiftKey;
-
-      if (!isUndoKey) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) {
         return;
       }
 
-      event.preventDefault();
-      undoLastChange();
+      const key = event.key.toLowerCase();
+      const isUndoKey = key === "z" && !event.shiftKey;
+      // Ctrl+Y (Windows / Excel) and Ctrl+Shift+Z (macOS) both redo.
+      const isRedoKey = (key === "y" && !event.shiftKey) || (key === "z" && event.shiftKey);
+
+      if (isUndoKey) {
+        event.preventDefault();
+        undoLastChange();
+      } else if (isRedoKey) {
+        event.preventDefault();
+        redoLastChange();
+      }
     };
 
     window.addEventListener("keydown", handleUndoShortcut, true);
     return () => window.removeEventListener("keydown", handleUndoShortcut, true);
-  }, [undoLastChange]);
+  }, [undoLastChange, redoLastChange]);
 
   useEffect(() => {
     if (!showSavedInvoices) {
@@ -190,6 +307,11 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
         return;
       }
 
+      // Clicks inside dialogs rendered from the sidebar (delete confirmation) must not close it.
+      if (target instanceof Element && target.closest("[role='alertdialog'], [role='dialog']")) {
+        return;
+      }
+
       if (savedInvoiceSidebarRef.current?.contains(target) || savedInvoiceToggleRef.current?.contains(target)) {
         return;
       }
@@ -206,31 +328,52 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
     };
   }, [showSavedInvoices]);
 
-  function handleDeleteSavedInvoice(id: string) {
-    const isDeletingActiveInvoice = id === activeSavedInvoiceId;
-    deleteCloudInvoice(id)
-      .then(async () => {
-        deleteSavedInvoice(id);
+  async function handleDeleteSavedInvoices(ids: string[]) {
+    let deletedCount = 0;
+    let firstError = "";
 
-        if (isDeletingActiveInvoice) {
-          const nextActiveInvoice = useInvoiceStore
-            .getState()
-            .savedInvoices.find((savedInvoice) => savedInvoice.id === useInvoiceStore.getState().activeSavedInvoiceId);
-
-          if (nextActiveInvoice) {
-            await saveCloudInvoice(nextActiveInvoice, currentUser.username);
-          }
+    // Sequential, so each delete sees the state left by the previous one.
+    for (const id of ids) {
+      try {
+        if (isCloudEnabled) {
+          await deleteCloudInvoice(id);
         }
 
-        return refreshCloudInvoices();
-      })
-      .catch((error) => {
-        console.error("Unable to delete cloud invoice.", error);
-        window.alert("This invoice is open somewhere else right now, so it cannot be deleted from here.");
-      });
+        const pending = saveTimersRef.current.get(id);
+        if (pending) window.clearTimeout(pending.timer);
+        saveTimersRef.current.delete(id);
+        syncedVersionsRef.current.delete(id);
+        deleteSavedInvoice(id);
+        deletedCount += 1;
+      } catch (error) {
+        if (error instanceof SessionExpiredError) return;
+        firstError ||= error instanceof Error ? error.message : "Unable to delete the invoice.";
+      }
+    }
+
+    if (firstError) {
+      toast.error(deletedCount > 0 ? `Deleted ${deletedCount} of ${ids.length}. ${firstError}` : firstError);
+    } else {
+      toast.success(deletedCount === 1 ? "Invoice deleted." : `${deletedCount} invoices deleted.`);
+    }
   }
 
-  if (!isMounted || !isCloudReady) {
+  async function handleSignOut() {
+    await Promise.race([flushPendingSaves(), new Promise((resolve) => window.setTimeout(resolve, 3000))]);
+
+    if (activeSavedInvoiceId && isCloudEnabled) {
+      releaseCloudInvoiceLock(activeSavedInvoiceId);
+    }
+
+    // The cloud keeps everything, so don't leave the shared invoice list behind in this browser.
+    if (isCloudEnabled) {
+      useInvoiceStore.persist.clearStorage();
+    }
+
+    onSignOut();
+  }
+
+  if (!isCloudReady) {
     return (
       <main className="grid min-h-screen place-items-center bg-[#e8e8e8]">
         <BrandLoader />
@@ -241,6 +384,7 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#e8e8e8] text-zinc-950">
       <div
+        aria-hidden="true"
         className="pointer-events-none fixed inset-0 bg-center bg-no-repeat opacity-50"
         style={{
           backgroundImage: `url(${backgroundPattern.src})`,
@@ -255,15 +399,23 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
           className="no-print grid w-full grid-cols-2 justify-items-center gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center sm:justify-center sm:gap-3"
         >
           <span ref={savedInvoiceToggleRef} className="contents">
-            <ActionButton icon={<FileText className="size-4" />} onClick={() => setShowSavedInvoices((isVisible) => !isVisible)}>
+            <ActionButton
+              icon={<FileText className="size-4" />}
+              aria-expanded={showSavedInvoices}
+              onClick={() => setShowSavedInvoices((isVisible) => !isVisible)}
+            >
               {showSavedInvoices ? "Hide Saved Invoice" : "Show Saved Invoice"}
             </ActionButton>
           </span>
-          <ActionButton icon={<Wand2 className="size-4" />} onClick={newInvoiceNumber}>New SL</ActionButton>
           <ActionButton icon={<Plus className="size-4" />} onClick={resetDraft}>New Invoice</ActionButton>
-          <PrintButton />
-          <ActionButton icon={<LogOut className="size-4" />} onClick={onSignOut}>{currentUser.username}</ActionButton>
+          <DownloadPdfButton getDocument={getCurrentInvoiceDocument} />
+          <ShareButton />
+          <ActionButton icon={<LogOut className="size-4" />} aria-label={`Sign out ${currentUser.username}`} title="Sign out" onClick={() => void handleSignOut()}>
+            {currentUser.username}
+          </ActionButton>
         </motion.div>
+
+        <SyncIndicator state={isCloudEnabled ? syncState : "local"} />
 
         <AnimatePresence>
           {showSavedInvoices && (
@@ -277,38 +429,54 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
             >
               <SavedInvoiceSidebar
                 activeSavedInvoiceId={activeSavedInvoiceId}
-                activeInvoiceNumber={invoice.customer.invoiceNumber}
                 savedInvoices={savedInvoices}
                 onLoad={loadSavedInvoice}
-                onDelete={handleDeleteSavedInvoice}
+                onDelete={(ids) => void handleDeleteSavedInvoices(ids)}
               />
             </motion.div>
           )}
         </AnimatePresence>
 
         <div className="grid w-full gap-4 xl:grid-cols-1 xl:items-start">
-
           <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="w-full overflow-x-hidden pb-8 sm:overflow-auto">
-            <InvoicePreview />
+            <InvoicePreview key={activeSavedInvoiceId} />
           </motion.section>
         </div>
       </div>
+
+      <ShareModal />
     </main>
+  );
+}
+
+function SyncIndicator({ state }: { state: SyncState }) {
+  const content: Record<SyncState, { icon: JSX.Element; label: string; className: string }> = {
+    local: { icon: <CloudOff className="size-3.5" aria-hidden="true" />, label: "Saved on this device only", className: "text-zinc-500" },
+    saving: { icon: <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />, label: "Saving…", className: "text-zinc-500" },
+    saved: { icon: <Cloud className="size-3.5" aria-hidden="true" />, label: "All changes saved", className: "text-zinc-500" },
+    locked: { icon: <Lock className="size-3.5" aria-hidden="true" />, label: "Open on another device — changes kept here", className: "text-amber-700" },
+    error: { icon: <CloudOff className="size-3.5" aria-hidden="true" />, label: "Cloud sync failed — changes kept on this device", className: "text-red-700" }
+  };
+  const { icon, label, className } = content[state];
+
+  return (
+    <p role="status" aria-live="polite" className={`no-print -mt-2 flex items-center gap-1.5 text-[11px] font-bold sm:-mt-3 ${className}`}>
+      {icon}
+      {label}
+    </p>
   );
 }
 
 function SavedInvoiceSidebar({
   activeSavedInvoiceId,
-  activeInvoiceNumber,
   savedInvoices,
   onLoad,
   onDelete
 }: {
   activeSavedInvoiceId: string;
-  activeInvoiceNumber: string;
-  savedInvoices: ReturnType<typeof useInvoiceStore.getState>["savedInvoices"];
+  savedInvoices: SavedInvoice[];
   onLoad: (id: string) => void;
-  onDelete: (id: string) => void;
+  onDelete: (ids: string[]) => void;
 }) {
   const [query, setQuery] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
@@ -408,7 +576,7 @@ function SavedInvoiceSidebar({
       return;
     }
 
-    deleteDialog.ids.forEach(onDelete);
+    onDelete(deleteDialog.ids);
     setSelectedInvoiceIds((ids) => ids.filter((invoiceId) => !deleteDialog.ids.includes(invoiceId)));
     setIsSelecting(false);
     setDeleteDialog(null);
@@ -453,6 +621,8 @@ function SavedInvoiceSidebar({
       <label className="mb-3 flex items-center gap-2 rounded border border-zinc-200 bg-zinc-50 px-2.5 py-2 text-xs font-semibold text-zinc-500 focus-within:border-[#e01b24] focus-within:bg-white">
         <Search className="size-3.5 shrink-0" />
         <input
+          type="search"
+          aria-label="Search saved invoices"
           className="min-w-0 flex-1 bg-transparent outline-none"
           placeholder="Search name or date"
           value={query}
@@ -462,7 +632,7 @@ function SavedInvoiceSidebar({
 
       {filteredInvoices.length === 0 ? (
         <p className="rounded border border-dashed border-zinc-200 px-3 py-4 text-center text-xs font-semibold text-zinc-400">
-          No saved invoices
+          {query.trim() ? "No invoices match your search" : "No saved invoices"}
         </p>
       ) : (
         <div className={`grid gap-3 pr-1 ${isExpanded ? "max-h-[70vh] overflow-y-auto" : ""}`}>
@@ -474,7 +644,7 @@ function SavedInvoiceSidebar({
 
               <ul className="grid gap-2">
                 {group.invoices.map((savedInvoice) => {
-                  const isActive = savedInvoice.id === activeSavedInvoiceId || savedInvoice.invoice.customer.invoiceNumber === activeInvoiceNumber;
+                  const isActive = savedInvoice.id === activeSavedInvoiceId;
                   const isChecked = selectedInvoiceIds.includes(savedInvoice.id);
 
                   return (
@@ -491,6 +661,7 @@ function SavedInvoiceSidebar({
                       )}
                       <button
                         type="button"
+                        aria-current={isActive ? "true" : undefined}
                         className="min-w-0 flex-1 px-2.5 py-1.5 text-left"
                         onClick={(event) => handleInvoiceClick(event, savedInvoice.id)}
                       >
@@ -568,7 +739,11 @@ function DeleteInvoiceDialog({
 
   return (
     <div className="fixed inset-0 z-[10000] grid place-items-center bg-black/25 px-4 backdrop-blur-sm">
-      <section className="w-full max-w-[460px] rounded-xl border border-[#e01b24] bg-white p-4 text-center shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-5">
+      <section
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-invoice-title"
+        className="w-full max-w-[460px] rounded-xl border border-[#e01b24] bg-white p-4 text-center shadow-[0_24px_80px_rgba(0,0,0,0.18)] sm:p-5">
         <button
           type="button"
           aria-label="Close delete dialog"
@@ -578,7 +753,7 @@ function DeleteInvoiceDialog({
           <X className="size-5" />
         </button>
 
-        <h2 className="mt-1 text-xl font-black text-slate-950">Delete invoice?</h2>
+        <h2 id="delete-invoice-title" className="mt-1 text-xl font-black text-slate-950">Delete invoice?</h2>
         <p className="mx-auto mt-3 max-w-sm text-sm font-medium leading-relaxed text-slate-900">
           Are you sure you want to delete “{title}”?<br />
           You can’t undo this action.
@@ -687,10 +862,7 @@ function formatEditedDate(value: string) {
   return `${day}/${month}/${year}`;
 }
 
-function compareSavedInvoicesByInvoiceDate(
-  first: ReturnType<typeof useInvoiceStore.getState>["savedInvoices"][number],
-  second: ReturnType<typeof useInvoiceStore.getState>["savedInvoices"][number]
-) {
+function compareSavedInvoicesByInvoiceDate(first: SavedInvoice, second: SavedInvoice) {
   const firstInvoiceDate = dateTimeOrZero(first.invoice.customer.date);
   const secondInvoiceDate = dateTimeOrZero(second.invoice.customer.date);
 
