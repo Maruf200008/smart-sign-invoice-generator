@@ -65,10 +65,15 @@ export const sheetClasses = {
 
   tail: "flex flex-1 flex-col",
   beforeSummary: "no-print px-[40px] pt-[10px]",
-  summarySection: "relative flex items-start justify-end gap-[24px] px-[40px] pb-[var(--inv-sum-pb)] pt-[var(--inv-table-pb)]",
+  // Two columns: in-words, then signature + contacts on the left; totals box, then the Remaining pill on the right.
+  // Both columns are equally tall: the footer sits at the bottom of the left column, level with the Remaining pill,
+  // instead of being pinned to the page bottom, freeing that space.
+  summarySection: "relative flex items-stretch justify-end gap-[24px] px-[40px] pb-[var(--inv-foot-pb)] pt-[var(--inv-table-pb)]",
+  summaryMain: "flex min-w-0 flex-1 flex-col",
+  summaryAside: "flex w-[320px] shrink-0 flex-col items-end gap-[var(--inv-sum-pb)]",
   summaryBox: "w-[320px] shrink-0",
-  // Grand total in words, left of the totals box (uses the free space there, so pages don't get taller).
-  inWords: "min-w-0 flex-1 border-l-[3px] border-[#e01b24] py-[2px] pl-[12px]",
+  // Remaining amount in words, left of the totals box (uses the free space there, so pages don't get taller).
+  inWords: "min-w-0 border-l-[3px] border-[#e01b24] py-[2px] pl-[12px]",
   inWordsLabel: "block text-[14px] font-bold leading-[1.4] text-[#52525b]",
   inWordsText: "text-[17px] font-semibold leading-[1.4] text-[#1a1a1a] [overflow-wrap:break-word]",
   summaryRow:
@@ -83,12 +88,13 @@ export const sheetClasses = {
   summaryValue: "text-right font-semibold",
   grandTotalRow: "bg-[#fafafa] font-bold",
 
-  remainingSection: "flex justify-end px-[40px] pb-[var(--inv-rem-pb)]",
   remaining:
     "flex min-w-[270px] items-center justify-end gap-[12px] rounded-full border-2 border-[#1a1a1a] px-[36px] py-[var(--inv-rem-py)] text-[19px] font-extrabold leading-[1.3]",
   remainingValue: "text-[#e01b24]",
 
   footer: "mt-auto px-[40px] pb-[var(--inv-foot-pb)] pt-[var(--inv-foot-pt)]",
+  // Last page: the same footer at the bottom of the summary's left column (at least a small gap below the in-words).
+  footerInline: "mt-auto pt-[var(--inv-sum-pb)]",
   signatureLabel: "mb-[var(--inv-sig-mb)] text-[12px] leading-[1.35] text-[#52525b]",
   signatureLine: "w-[224px] border-b-[1.5px] border-[#1a1a1a]",
   contactList: "mt-[var(--inv-contact-mt)] grid gap-[var(--inv-contact-gap)] text-[12px] leading-[var(--inv-contact-lh)] text-[#222]",

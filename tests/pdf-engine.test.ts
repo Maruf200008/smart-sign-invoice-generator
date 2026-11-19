@@ -148,40 +148,40 @@ describe("font registry", () => {
   });
 });
 
-describe("A4 pagination (12 rows per page)", () => {
+describe("A4 pagination (15 rows per page)", () => {
   const ranges = (rowCount: number) => paginateInvoiceRows(rowCount).map(({ start, end, isLast }) => ({ rows: [start + 1, end], isLast }));
 
-  it("is 12 rows per page", () => {
-    expect(ROWS_PER_PAGE).toBe(12);
+  it("is 15 rows per page", () => {
+    expect(ROWS_PER_PAGE).toBe(15);
   });
 
   it("keeps 5 rows on one page with the totals", () => {
     expect(ranges(5)).toEqual([{ rows: [1, 5], isLast: true }]);
   });
 
-  it("keeps exactly 12 rows on one page with the totals", () => {
-    expect(ranges(12)).toEqual([{ rows: [1, 12], isLast: true }]);
+  it("keeps exactly 15 rows on one page with the totals", () => {
+    expect(ranges(15)).toEqual([{ rows: [1, 15], isLast: true }]);
   });
 
-  it("moves row 13 to a second page that carries the totals", () => {
-    expect(ranges(13)).toEqual([
-      { rows: [1, 12], isLast: false },
-      { rows: [13, 13], isLast: true }
+  it("moves row 16 to a second page that carries the totals", () => {
+    expect(ranges(16)).toEqual([
+      { rows: [1, 15], isLast: false },
+      { rows: [16, 16], isLast: true }
     ]);
   });
 
-  it("numbers 30 rows continuously over three pages", () => {
-    expect(ranges(30)).toEqual([
-      { rows: [1, 12], isLast: false },
-      { rows: [13, 24], isLast: false },
-      { rows: [25, 30], isLast: true }
+  it("numbers 40 rows continuously over three pages", () => {
+    expect(ranges(40)).toEqual([
+      { rows: [1, 15], isLast: false },
+      { rows: [16, 30], isLast: false },
+      { rows: [31, 40], isLast: true }
     ]);
   });
 
   it("starts a new page only after a full one", () => {
-    expect(ranges(24)).toEqual([
-      { rows: [1, 12], isLast: false },
-      { rows: [13, 24], isLast: true }
+    expect(ranges(30)).toEqual([
+      { rows: [1, 15], isLast: false },
+      { rows: [16, 30], isLast: true }
     ]);
   });
 
@@ -344,7 +344,7 @@ describe("invoice document model", () => {
     const document = toInvoiceDocument(invoice);
     expect(document.date).toBe("18/11/2026");
     expect(document.items[0]).toEqual({ name: "ভিনাইল ব্যানার", width: "10", height: "5", hasSize: true, quantity: "2", sqf: "100", rate: "25", total: "2,500" });
-    // The first page always shows its 12 rows, blank or not.
+    // The first page always shows its 15 rows, blank or not.
     expect(document.items).toHaveLength(ROWS_PER_PAGE);
     expect(document.items.slice(1).every((item) => !item.name && !item.total && !item.hasSize)).toBe(true);
     expect(document.money.grandTotal).toBe("৳2,520");
@@ -352,12 +352,12 @@ describe("invoice document model", () => {
     expect(document.advance).toBe("");
   });
 
-  it("continues on a second page from row 13, without printing unused rows past it", () => {
+  it("continues on a second page from row 16, without printing unused rows past it", () => {
     const filled = { ...createBlankItem(), name: "Banner", quantity: 1, unitPrice: 10 };
-    const long = { ...invoice, items: [...Array.from({ length: 14 }, () => ({ ...filled })), createBlankItem(), createBlankItem()] } as InvoiceData;
+    const long = { ...invoice, items: [...Array.from({ length: 17 }, () => ({ ...filled })), createBlankItem(), createBlankItem()] } as InvoiceData;
     const document = toInvoiceDocument(long);
-    expect(document.items).toHaveLength(14);
-    expect(paginateInvoiceRows(document.items.length).map(({ start, end }) => [start + 1, end])).toEqual([[1, 12], [13, 14]]);
+    expect(document.items).toHaveLength(17);
+    expect(paginateInvoiceRows(document.items.length).map(({ start, end }) => [start + 1, end])).toEqual([[1, 15], [16, 17]]);
   });
 
   it("produces the same document from a shared invoice", () => {

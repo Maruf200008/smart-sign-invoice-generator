@@ -1,7 +1,7 @@
 import { sheetClasses } from "@/components/invoice/sheet/sheet-styles";
 import type { InvoiceDocumentData } from "@/lib/invoice-document";
 import { buildJpegFileNames, type ExportFormat, JPEG_MIME_TYPE, JPEG_QUALITY } from "@/lib/invoice-export";
-import { getInvoiceLabels } from "@/lib/invoice-labels";
+import { invoiceLabels } from "@/lib/invoice-labels";
 import type { CapturedPage } from "@/lib/pdf/dom-to-pdf";
 import { generateDocumentPdfFile } from "@/lib/share-pdf";
 
@@ -16,8 +16,9 @@ import { generateDocumentPdfFile } from "@/lib/share-pdf";
 
 // The output depends on the layout as well as the content. Keying on both means a design change can never hand back
 // a file rendered with the previous layout (the renderer is loaded with a dynamic import, which hot reload does not
-// reach, so without this a dev session kept serving the old file for an unchanged invoice).
-const layoutKey = () => JSON.stringify([sheetClasses, getInvoiceLabels()]);
+// reach, so without this a dev session kept serving the old file for an unchanged invoice). The language itself is
+// part of the document, so an English and a Bangla export of the same invoice are always separate entries.
+const layoutKey = () => JSON.stringify([sheetClasses, invoiceLabels]);
 
 /** Preview thumbnails: sharp on a 2x screen at ~360 CSS px wide, small enough to render in a blink. */
 const PREVIEW_DPI = 90;

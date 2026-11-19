@@ -1,4 +1,5 @@
 import { type InvoiceDocumentData, toInvoiceDocument } from "@/lib/invoice-document";
+import { getInvoiceLabels } from "@/lib/invoice-labels";
 import type { CapturedPage } from "@/lib/pdf/dom-to-pdf";
 import type { InvoiceData } from "@/types/invoice";
 
@@ -49,10 +50,10 @@ export function isShareCancelled(error: unknown) {
 }
 
 /** Title stored inside the PDF (shown by viewers instead of the file name). */
-export function buildPdfTitle(document: Pick<InvoiceDocumentData, "customerName" | "invoiceNumber">) {
+export function buildPdfTitle(document: Pick<InvoiceDocumentData, "customerName" | "invoiceNumber"> & Partial<Pick<InvoiceDocumentData, "language">>) {
   const name = document.customerName.replace(/\s+/g, " ").trim();
   const number = document.invoiceNumber.trim();
-  return ["Invoice", number, name && `— ${name}`].filter(Boolean).join(" ");
+  return [getInvoiceLabels(document.language).invoice, number, name && `— ${name}`].filter(Boolean).join(" ");
 }
 
 /**
@@ -66,7 +67,7 @@ export async function generateDocumentPdfFile(document: InvoiceDocumentData, pag
   try {
     // Loaded on demand: the PDF engine (HarfBuzz + fonts) is only needed when a PDF is requested.
     const { captureInvoicePages, invoicePagesToPdf } = await import("@/lib/pdf/invoice-pdf");
-    bytes = invoicePagesToPdf(pages ?? (await captureInvoicePages(document)), { title: buildPdfTitle(document) });
+    bytes = invoicePagesToPdf(pages ?? (await captureInvoicePages(document)), { title: buildPdfTitle(document), language: document.language });
   } catch (error) {
     console.error("Invoice PDF generation failed", error);
     throw new SharePdfError("pdf-generation-failed", "Couldn't generate the invoice PDF. Please try again.");

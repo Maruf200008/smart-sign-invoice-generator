@@ -1,5 +1,6 @@
 import { isBlankItem, plainNumber } from "@/lib/invoice-document";
 import { applyItemPatch, calculateLineTotal, createBlankItem, roundToInteger, roundToTwo, safePositiveNumber, uid, withMinimumRows } from "@/lib/invoice-utils";
+import { toLatinDigits } from "@/lib/invoice-labels";
 import type { InvoiceItem } from "@/types/invoice";
 
 /**
@@ -57,7 +58,7 @@ export function isNumericText(text: string) {
 
 /** "১,২৫০.৫০ ৳" -> 1250.5: Bengali digits become Latin, grouping, spaces and currency symbols are dropped. */
 export function parseNumericText(text: string) {
-  const latin = text.replace(/[০-৯]/g, (digit) => String(digit.charCodeAt(0) - 0x09e6));
+  const latin = toLatinDigits(text);
   const cleaned = latin.replace(/[,\s৳$€£₹]/g, "");
   return cleaned === "" ? 0 : safePositiveNumber(cleaned);
 }

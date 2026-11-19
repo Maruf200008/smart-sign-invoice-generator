@@ -1,5 +1,5 @@
 /**
- * Invoice pages are A4: rows are split 12 per page (see pagination.ts). A page only grows taller than A4 in the
+ * Invoice pages are A4: rows are split 15 per page (see pagination.ts). A page only grows taller than A4 in the
  * rare case its own content can't fit (e.g. very long descriptions), so nothing is ever clipped.
  */
 export const PAGE_WIDTH_MM = 210;

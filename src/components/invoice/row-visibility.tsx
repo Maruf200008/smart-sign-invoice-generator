@@ -22,9 +22,9 @@ export function useRowVisibility() {
 }
 
 /**
- * Invoices keep up to MAX_INVOICE_ITEMS rows. The first page always shows its 12 rows (blank or not); past that, unused
+ * Invoices keep up to MAX_INVOICE_ITEMS rows. The first page always shows its 15 rows (blank or not); past that, unused
  * rows at the end are not printed. The editor shows the same rows as the PDF, and reveals one more blank row on
- * "Add Row" (or Enter on the last row), so row 13 onwards continues on a new page.
+ * "Add Row" (or Enter on the last row), so row 16 onwards continues on a new page.
  */
 export function RowVisibilityProvider({ children }: { children: ReactNode }) {
   const items = useInvoiceStore((state) => state.invoice.items);

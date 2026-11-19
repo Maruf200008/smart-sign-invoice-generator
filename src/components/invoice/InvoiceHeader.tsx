@@ -4,8 +4,9 @@ import { CalendarDays } from "lucide-react";
 import { type KeyboardEvent, useRef } from "react";
 import { AutoGrowTextarea } from "@/components/invoice/sheet/AutoGrowTextarea";
 import { SheetBanner, SheetMetaRow, SheetTitleRow, SheetToRow } from "@/components/invoice/sheet/SheetParts";
-import { getInvoiceLabels } from "@/lib/invoice-labels";
+import { type InvoiceLabels, localizeDigits } from "@/lib/invoice-labels";
 import { formatInvoiceDate, toDateInputValue } from "@/lib/invoice-utils";
+import { useInvoiceLabels, useInvoiceLanguage } from "@/store/invoice-language-store";
 import { useInvoiceStore } from "@/store/invoice-store";
 import type { InvoiceData } from "@/types/invoice";
 
@@ -14,14 +15,15 @@ const fieldClass = "outline-none focus:bg-[#fff8f8]";
 export function InvoiceHeader() {
   const invoice = useInvoiceStore((state) => state.invoice);
   const updateInvoice = useInvoiceStore((state) => state.updateInvoice);
-  const labels = getInvoiceLabels();
+  const labels = useInvoiceLabels();
+  const language = useInvoiceLanguage();
 
   const updateCustomer = (key: keyof InvoiceData["customer"], value: string) =>
     updateInvoice({ customer: { ...invoice.customer, [key]: value } });
 
   return (
     <header>
-      <SheetBanner />
+      <SheetBanner labels={labels} />
 
       <SheetTitleRow title={labels.invoice}>
         <SheetMetaRow as="label" label={labels.slNo}>
@@ -34,15 +36,16 @@ export function InvoiceHeader() {
           />
         </SheetMetaRow>
         <DateMetaField
-          label={labels.date}
+          labels={labels}
           value={formatInvoiceDate(invoice.customer.date)}
+          display={localizeDigits(formatInvoiceDate(invoice.customer.date), language)}
           onChange={(value) => updateCustomer("date", value)}
         />
       </SheetTitleRow>
 
       <SheetToRow label={labels.to}>
         <AutoGrowTextarea
-          aria-label="Customer name"
+          aria-label={labels.customerNameAria}
           className={fieldClass}
           placeholder={labels.enterTo}
           value={invoice.customer.name}
@@ -61,7 +64,9 @@ function blurOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
   }
 }
 
-function DateMetaField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+/** `value` is the stored dd/mm/yyyy date (fed to the native picker); `display` is that date in the invoice digits. */
+function DateMetaField({ labels, value, display, onChange }: { labels: InvoiceLabels; value: string; display: string; onChange: (value: string) => void }) {
+  const label = labels.date;
   const dateInputRef = useRef<HTMLInputElement>(null);
 
   function openDatePicker() {
@@ -83,16 +88,16 @@ function DateMetaField({ label, value, onChange }: { label: string; value: strin
   return (
     <SheetMetaRow label={label}>
       <input
-        aria-label={`${label} (click to choose)`}
+        aria-label={labels.dateAria(label)}
         className={`block h-[1.4em] w-full cursor-pointer border-0 bg-transparent p-0 ${fieldClass}`}
-        value={value}
+        value={display}
         readOnly
         onClick={openDatePicker}
       />
       {/* Positioned over the cell edge so it takes no layout space: the cell is the same size as in the PDF. */}
       <button
         type="button"
-        aria-label="Choose invoice date"
+        aria-label={labels.chooseDate}
         className="no-print absolute inset-y-0 right-0 grid w-[40px] cursor-pointer place-items-center border-l-[1.5px] border-[#1a1a1a] text-[#1a1a1a] hover:text-[#e01b24]"
         onClick={openDatePicker}
       >

@@ -2,6 +2,8 @@ import { fileURLToPath } from "url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  // tsconfig keeps JSX as-is for Next; tests compile it themselves so components can be rendered to markup.
+  oxc: { jsx: { runtime: "automatic" } },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
