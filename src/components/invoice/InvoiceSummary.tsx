@@ -6,8 +6,9 @@ import { cn } from "@/lib/cn";
 import { useRowVisibility } from "@/components/invoice/row-visibility";
 import { SheetRemaining, SheetSummaryRow, SheetTail, SheetVatRow } from "@/components/invoice/sheet/SheetParts";
 import { toInvoiceDocument } from "@/lib/invoice-document";
-import { getInvoiceLabels } from "@/lib/invoice-labels";
+import { getInvoiceLabels, localizeDigits } from "@/lib/invoice-labels";
 import { parsePositiveInput, roundPositiveInput } from "@/lib/invoice-utils";
+import { useInvoiceLanguage } from "@/store/invoice-language-store";
 import { MAX_INVOICE_ITEMS, useInvoiceStore } from "@/store/invoice-store";
 
 /** Summary, signature and contact footer of the editable invoice. Values are formatted exactly like the PDF. */
@@ -15,8 +16,9 @@ export function InvoiceSummary() {
   const invoice = useInvoiceStore((state) => state.invoice);
   const updateInvoice = useInvoiceStore((state) => state.updateInvoice);
   const { canAddRow, revealRow } = useRowVisibility();
-  const printable = toInvoiceDocument(invoice);
-  const labels = getInvoiceLabels();
+  const language = useInvoiceLanguage();
+  const printable = toInvoiceDocument(invoice, language);
+  const labels = getInvoiceLabels(language);
 
   const addRow = () => {
     const id = revealRow();
@@ -34,11 +36,11 @@ export function InvoiceSummary() {
           type="button"
           className="flex w-full items-center justify-center gap-[8px] rounded-[6px] border-[1.5px] border-dashed border-[#ddd] px-[12px] py-[8px] text-[12px] font-bold uppercase leading-none tracking-wide text-[#a1a1aa] transition hover:border-[#e01b24] hover:text-[#e01b24] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[#ddd] disabled:hover:text-[#a1a1aa]"
           disabled={!canAddRow}
-          title={canAddRow ? "Add a row (empty rows at the end are not printed)" : `An invoice can have up to ${MAX_INVOICE_ITEMS} rows`}
+          title={canAddRow ? labels.addRowTitle : labels.maxRowsTitle(MAX_INVOICE_ITEMS)}
           onClick={addRow}
         >
           <Plus className="size-[14px]" aria-hidden="true" />
-          Add Row
+          {labels.addRow}
         </button>
       }
       summary={
@@ -54,7 +56,7 @@ export function InvoiceSummary() {
             rate={
               <>
                 <SummaryNumberInput
-                  ariaLabel="VAT / Tax rate"
+                  ariaLabel={labels.taxRateAria}
                   className="w-[28px] text-right"
                   value={invoice.taxRate}
                   onChange={(value) => updateInvoice({ taxRate: value })}
@@ -85,14 +87,18 @@ function SummaryNumberInput({
   onChange: (value: number) => void;
   className: string;
 }) {
-  const [displayValue, setDisplayValue] = useState(value === 0 ? "" : String(value));
+  // Shown in the invoice digits; Bengali or Latin digits can be typed (parsePositiveInput reads both).
+  const language = useInvoiceLanguage();
+  const show = (number: number) => (number === 0 ? "" : localizeDigits(String(number), language));
+  const [displayValue, setDisplayValue] = useState(() => show(value));
   const [isFocused, setIsFocused] = useState(false);
 
   useEffect(() => {
     if (!isFocused) {
-      setDisplayValue(value === 0 ? "" : String(value));
+      setDisplayValue(show(value));
     }
-  }, [isFocused, value]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `show` only depends on `language`, listed here.
+  }, [isFocused, value, language]);
 
   return (
     <input
@@ -109,7 +115,7 @@ function SummaryNumberInput({
       onBlur={(event) => {
         const roundedValue = roundPositiveInput(event.target.value);
         setIsFocused(false);
-        setDisplayValue(roundedValue === 0 ? "" : String(roundedValue));
+        setDisplayValue(show(roundedValue));
         onChange(roundedValue);
       }}
     />

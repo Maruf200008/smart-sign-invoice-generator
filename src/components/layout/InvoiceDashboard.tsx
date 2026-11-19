@@ -6,15 +6,16 @@ import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState, use
 import { ActionButton } from "@/components/controls/ActionButton";
 import { BrandLoader } from "@/components/brand/BrandLoader";
 import { DownloadPdfButton } from "@/components/controls/DownloadPdfButton";
+import { LanguageToggleButton } from "@/components/controls/LanguageToggleButton";
 import { ShareButton } from "@/components/controls/ShareButton";
 import { ShareModal } from "@/components/share/ShareModal";
 import backgroundPattern from "@/assets/background_pattern.jpg";
 import { InvoicePreview } from "@/components/invoice/InvoicePreview";
 import { deleteCloudInvoice, loadCloudInvoices, releaseCloudInvoiceLock, SessionExpiredError, touchCloudInvoiceLock } from "@/lib/invoice-cloud-storage";
-import { toInvoiceDocument } from "@/lib/invoice-document";
 import { createSaveShortcutHandler, saveShortcutLabel } from "@/lib/sync/save-shortcut";
 import { getInvoiceSyncManager } from "@/lib/sync/invoice-sync-client";
 import type { FlushOutcome, SyncStatus } from "@/lib/sync/sync-manager";
+import { getCurrentInvoiceDocument } from "@/store/invoice-language-store";
 import { useInvoiceStore } from "@/store/invoice-store";
 import { toast } from "@/store/toast-store";
 import type { AuthUser } from "@/types/auth";
@@ -26,9 +27,6 @@ const AUTO_SAVE_INTERVAL_MS = 30_000;
 const POLL_INTERVAL_MS = 10_000;
 const LOCK_REFRESH_MS = 10_000;
 const SIGN_OUT_SAVE_TIMEOUT_MS = 3000;
-
-// Reads the latest invoice at click time, so the button never re-renders on edits.
-const getCurrentInvoiceDocument = () => toInvoiceDocument(useInvoiceStore.getState().invoice);
 
 function isPageVisible() {
   return typeof document === "undefined" || document.visibilityState === "visible";
@@ -438,6 +436,8 @@ export function InvoiceDashboard({ currentUser, onSignOut }: { currentUser: Auth
             </ActionButton>
           </span>
           <ActionButton icon={<Plus className="size-4" />} onClick={resetDraft}>New Invoice</ActionButton>
+          <LanguageToggleButton />
+          {/* Reads the latest invoice (in the current language) at click time, so the button never re-renders on edits. */}
           <DownloadPdfButton getDocument={getCurrentInvoiceDocument} />
           <ShareButton />
           <ActionButton icon={<LogOut className="size-4" />} aria-label={`Sign out ${currentUser.username}`} title="Sign out" onClick={() => void handleSignOut()}>

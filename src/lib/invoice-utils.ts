@@ -1,3 +1,4 @@
+import { toLatinDigits } from "@/lib/invoice-labels";
 import { ROWS_PER_PAGE } from "@/lib/invoice-sheet/pagination";
 import type { CurrencyCode, InvoiceData, InvoiceItem, InvoiceTotals } from "@/types/invoice";
 
@@ -70,7 +71,7 @@ export function toDateInputValue(value: string) {
   return "";
 }
 
-/** Pads an invoice's rows with blank ones so it always has at least one full page (12 rows) to type into. */
+/** Pads an invoice's rows with blank ones so it always has at least one full page (15 rows) to type into. */
 export function withMinimumRows(items: InvoiceItem[], minimum = ROWS_PER_PAGE): InvoiceItem[] {
   return items.length >= minimum ? items : [...items, ...Array.from({ length: minimum - items.length }, () => createBlankItem())];
 }
@@ -251,7 +252,7 @@ export function parsePositiveInput(value: string) {
     return 0;
   }
 
-  return safePositiveNumber(value);
+  return safePositiveNumber(toLatinDigits(value));
 }
 
 export function roundPositiveInput(value: string) {
@@ -259,6 +260,6 @@ export function roundPositiveInput(value: string) {
     return 0;
   }
 
-  return roundToTwo(safePositiveNumber(value));
+  return roundToTwo(safePositiveNumber(toLatinDigits(value)));
 }
 

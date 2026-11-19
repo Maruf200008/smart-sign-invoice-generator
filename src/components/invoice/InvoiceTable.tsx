@@ -31,8 +31,9 @@ import {
   rangeToTsv,
   samePos
 } from "@/lib/invoice-grid";
-import { getInvoiceLabels } from "@/lib/invoice-labels";
 import { formatDecimal, lineQuantitySqf } from "@/lib/invoice-utils";
+import { localizeDigits } from "@/lib/invoice-labels";
+import { useInvoiceLabels, useInvoiceLanguage } from "@/store/invoice-language-store";
 import { MAX_INVOICE_ITEMS, useInvoiceStore } from "@/store/invoice-store";
 import type { InvoiceItem } from "@/types/invoice";
 import { GripVertical, X } from "lucide-react";
@@ -78,15 +79,6 @@ const HEIGHT_COL = GRID_FIELDS.indexOf("height");
 const QUANTITY_COL = GRID_FIELDS.indexOf("quantity");
 const RATE_COL = GRID_FIELDS.indexOf("unitPrice");
 
-const FIELD_LABELS: Record<GridField, string> = {
-  name: "Product description",
-  width: "Width",
-  height: "Height",
-  quantity: "Quantity",
-  unitPrice: "Rate",
-  total: "Total"
-};
-
 const ARROWS: Record<string, [number, number]> = {
   ArrowUp: [-1, 0],
   ArrowDown: [1, 0],
@@ -118,10 +110,10 @@ function sameItems(a: readonly InvoiceItem[], b: readonly InvoiceItem[]) {
 
 /** One page's slice of the editable item table: the same table frame and head on every page. */
 export function InvoiceTable({ rows, continued = false }: { rows: SheetRow[]; continued?: boolean }) {
-  const labels = getInvoiceLabels();
+  const labels = useInvoiceLabels();
 
   return (
-    <SheetItemsTable labels={labels} caption={continued ? "Invoice items (continued)" : "Invoice items"}>
+    <SheetItemsTable labels={labels} caption={continued ? labels.itemsCaptionContinued() : labels.itemsCaption}>
       <SheetRows rows={rows} />
     </SheetItemsTable>
   );
@@ -143,6 +135,10 @@ export function useInvoiceGrid(): { rows: SheetRow[]; overlay: ReactNode } {
   const removeItem = useInvoiceStore((state) => state.removeItem);
   const reorderItem = useInvoiceStore((state) => state.reorderItem);
   const { visibleCount, revealRow, showRows } = useRowVisibility();
+  const labels = useInvoiceLabels();
+  const language = useInvoiceLanguage();
+  // Numbers are shown (and edited) in the invoice language digits; typed or pasted digits of any language parse.
+  const digits = (text: string) => localizeDigits(text, language);
 
   const [active, setActive] = useState<CellPos>({ row: 0, col: 0 });
   const [extent, setExtent] = useState<CellPos>({ row: 0, col: 0 });
@@ -734,10 +730,10 @@ export function useInvoiceGrid(): { rows: SheetRow[]; overlay: ReactNode } {
       "data-grid-col": col,
       "data-row-id": item.id,
       "data-field": field,
-      "aria-label": `${FIELD_LABELS[field]}, row ${row + 1}`,
+      "aria-label": labels.cellAria(labels.columns[field], row + 1),
       tabIndex: isActive ? 0 : -1,
       readOnly: !edit,
-      value: edit ? (edit.draft ?? cellEditText(item, field)) : displayText(item, field),
+      value: edit ? (edit.draft ?? digits(cellEditText(item, field))) : digits(displayText(item, field)),
       onKeyDown: (event: KeyboardEvent<CellElement>) => onCellKeyDown(event, pos),
       onFocus: () => onCellFocus(pos)
     };
@@ -813,7 +809,7 @@ export function useInvoiceGrid(): { rows: SheetRow[]; overlay: ReactNode } {
           <td
             className={cn(sheetClasses.td, sheetClasses.tdNo, "invoice-grid-row-head relative")}
             data-row-selected={rowSelected ? "" : undefined}
-            title="Select row (right-click for row actions)"
+            title={labels.selectRowTitle}
             onMouseDown={(event) => onRowHeaderMouseDown(event, index)}
             onMouseEnter={() => onCellMouseEnter({ row: index, col: LAST_COL })}
             onContextMenu={(event) => onCellContextMenu(event, index)}
@@ -823,8 +819,8 @@ export function useInvoiceGrid(): { rows: SheetRow[]; overlay: ReactNode } {
               <button
                 type="button"
                 draggable
-                aria-label="Drag row"
-                title="Drag row"
+                aria-label={labels.dragRow}
+                title={labels.dragRow}
                 className="grid size-[4mm] cursor-grab place-items-center rounded text-[#a1a1aa] hover:bg-red-50 hover:text-[#e01b24] active:cursor-grabbing"
                 onDragStart={(event) => {
                   setDraggedIndex(index);
@@ -841,15 +837,15 @@ export function useInvoiceGrid(): { rows: SheetRow[]; overlay: ReactNode } {
               <button
                 type="button"
                 tabIndex={-1}
-                aria-label="Remove row"
-                title="Remove row"
+                aria-label={labels.removeRow}
+                title={labels.removeRow}
                 className="grid size-[4mm] place-items-center rounded text-[#a1a1aa] hover:bg-red-50 hover:text-[#e01b24]"
                 onClick={() => removeItem(item.id)}
               >
                 <X className="size-[3.4mm]" aria-hidden="true" />
               </button>
             </div>
-            {index + 1}
+            {digits(String(index + 1))}
           </td>
           {renderCell(item, index, 0, sheetClasses.tdName)}
           {renderCell(item, index, WIDTH_COL, sheetClasses.tdSize, "text-center")}
@@ -867,7 +863,7 @@ export function useInvoiceGrid(): { rows: SheetRow[]; overlay: ReactNode } {
             data-selected={betweenSelectedAttr(index, QUANTITY_COL)}
             {...calculatedCellMouse(index, QUANTITY_COL)}
           >
-            <div className={sheetClasses.cellText}>{quantitySqf > 0 ? formatDecimal(quantitySqf) : ""}</div>
+            <div className={sheetClasses.cellText}>{quantitySqf > 0 ? digits(formatDecimal(quantitySqf)) : ""}</div>
           </td>
           {renderCell(item, index, RATE_COL, sheetClasses.tdRate, "text-right")}
           {renderCell(item, index, LAST_COL, sheetClasses.tdTotal, "text-center font-semibold")}

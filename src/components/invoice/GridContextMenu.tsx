@@ -4,25 +4,24 @@ import { ArrowDownToLine, ArrowUpToLine, CopyPlus, Eraser, Trash2, type LucideIc
 import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
+import { useInvoiceLabels } from "@/store/invoice-language-store";
 
 export type GridMenuAction = "insertAbove" | "insertBelow" | "duplicate" | "clear" | "delete";
 
 interface MenuEntry {
   action: GridMenuAction;
   icon: LucideIcon;
-  label: (rows: number) => string;
   danger?: boolean;
   separatorBefore?: boolean;
 }
 
-const rowsText = (rows: number) => (rows > 1 ? `${rows} Rows` : "Row");
-
+// Item text comes from the invoice labels (labels.rowMenu), in the current invoice language.
 const ENTRIES: MenuEntry[] = [
-  { action: "insertAbove", icon: ArrowUpToLine, label: (rows) => `Insert ${rowsText(rows)} Above` },
-  { action: "insertBelow", icon: ArrowDownToLine, label: (rows) => `Insert ${rowsText(rows)} Below` },
-  { action: "duplicate", icon: CopyPlus, label: (rows) => `Duplicate ${rowsText(rows)}`, separatorBefore: true },
-  { action: "clear", icon: Eraser, label: (rows) => `Clear ${rowsText(rows)}` },
-  { action: "delete", icon: Trash2, label: (rows) => `Delete ${rowsText(rows)}`, danger: true, separatorBefore: true }
+  { action: "insertAbove", icon: ArrowUpToLine },
+  { action: "insertBelow", icon: ArrowDownToLine },
+  { action: "duplicate", icon: CopyPlus, separatorBefore: true },
+  { action: "clear", icon: Eraser },
+  { action: "delete", icon: Trash2, danger: true, separatorBefore: true }
 ];
 
 const VIEWPORT_MARGIN = 8;
@@ -48,6 +47,7 @@ export function GridContextMenu({
   /** `refocus`: return keyboard focus to the grid (Escape), rather than leaving it where the user clicked. */
   onClose: (refocus: boolean) => void;
 }) {
+  const labels = useInvoiceLabels();
   const menuRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: x, top: y });
   const onCloseRef = useRef(onClose);
@@ -118,14 +118,14 @@ export function GridContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      aria-label="Row actions"
+      aria-label={labels.rowActions}
       data-grid-menu=""
       className="fixed z-[100] min-w-[210px] rounded-xl border border-zinc-200 bg-white p-1 text-[13px] text-zinc-800 shadow-[0_12px_40px_rgba(0,0,0,0.18)] sysdark:border-zinc-700 sysdark:bg-zinc-900 sysdark:text-zinc-100"
       style={position}
       onKeyDown={handleKeyDown}
       onContextMenu={(event) => event.preventDefault()}
     >
-      {ENTRIES.map(({ action, icon: Icon, label, danger, separatorBefore }) => (
+      {ENTRIES.map(({ action, icon: Icon, danger, separatorBefore }) => (
         <div key={action}>
           {separatorBefore && <div role="separator" className="my-1 h-px bg-zinc-200 sysdark:bg-zinc-700" />}
           <button
@@ -141,7 +141,7 @@ export function GridContextMenu({
             onClick={() => onAction(action)}
           >
             <Icon className="size-4 shrink-0 opacity-80" aria-hidden="true" />
-            {label(rowCount)}
+            {labels.rowMenu[action](rowCount)}
           </button>
         </div>
       ))}

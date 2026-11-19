@@ -17,24 +17,24 @@ import {
 import { sheetClasses } from "@/components/invoice/sheet/sheet-styles";
 import { cn } from "@/lib/cn";
 import type { InvoiceDocumentData } from "@/lib/invoice-document";
-import { getInvoiceLabels } from "@/lib/invoice-labels";
+import { getInvoiceLabels, localizeDigits } from "@/lib/invoice-labels";
 import { paginateInvoiceRows } from "@/lib/invoice-sheet/pagination";
 
 /**
  * Read-only A4 invoice. It is built from the same sheet parts and class tokens as the editable preview, so it is
- * pixel-identical to it; the public share page shows it and the PDF engine draws it. Rows are split 12 per page
+ * pixel-identical to it; the public share page shows it and the PDF engine draws it. Rows are split 15 per page
  * (numbering continues across pages); the signature and contact footer is on every page, the totals on the last
  * page only.
  */
 export function InvoiceDocument({ data, printable = false }: { data: InvoiceDocumentData; printable?: boolean }) {
-  const labels = getInvoiceLabels();
+  const labels = getInvoiceLabels(data.language);
   const cell = (extra: string) => cn(sheetClasses.td, extra);
 
   const rows = data.items.map((item, index) => ({
     key: String(index),
     node: (
       <tr data-sheet-row="">
-        <td className={cell(sheetClasses.tdNo)}>{index + 1}</td>
+        <td className={cell(sheetClasses.tdNo)}>{localizeDigits(String(index + 1), data.language)}</td>
         <td className={cell(sheetClasses.tdName)}>
           <div className={sheetClasses.cellText}>{item.name}</div>
         </td>
@@ -63,7 +63,7 @@ export function InvoiceDocument({ data, printable = false }: { data: InvoiceDocu
 
   const header = (
     <header>
-      <SheetBanner />
+      <SheetBanner labels={labels} />
       <SheetTitleRow title={labels.invoice}>
         <SheetMetaRow label={labels.slNo}>{data.invoiceNumber}</SheetMetaRow>
         <SheetMetaRow label={labels.date}>{data.date}</SheetMetaRow>
@@ -104,7 +104,7 @@ export function InvoiceDocument({ data, printable = false }: { data: InvoiceDocu
     content: (
       <>
         {header}
-        <SheetItemsTable labels={labels} caption={page.isFirst ? "Invoice items" : `Invoice items (continued, page ${page.index + 1})`}>
+        <SheetItemsTable labels={labels} caption={page.isFirst ? labels.itemsCaption : labels.itemsCaptionContinued(page.index + 1)}>
           <SheetRows rows={rows.slice(page.start, page.end)} />
         </SheetItemsTable>
         {page.isLast ? tail : <SheetPageFooter labels={labels} />}
@@ -112,5 +112,5 @@ export function InvoiceDocument({ data, printable = false }: { data: InvoiceDocu
     )
   }));
 
-  return <InvoicePages ariaLabel={`Invoice ${data.invoiceNumber}`} printable={printable} pages={pages} />;
+  return <InvoicePages ariaLabel={labels.invoiceAria(data.invoiceNumber)} pageAriaLabel={labels.pageAria} printable={printable} pages={pages} />;
 }

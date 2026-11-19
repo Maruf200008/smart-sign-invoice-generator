@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type InvoiceDocumentData, toInvoiceDocument } from "@/lib/invoice-document";
+import type { InvoiceDocumentData } from "@/lib/invoice-document";
 import {
   canShareFiles,
   describeExportError,
@@ -13,6 +13,7 @@ import {
   shareFiles
 } from "@/lib/invoice-export";
 import { type ExportProgress, getInvoiceCapture, getInvoiceExportFiles, getInvoicePdfFile, getInvoicePreviews } from "@/lib/pdf/export-cache";
+import { getCurrentInvoiceDocument, useInvoiceLanguageStore } from "@/store/invoice-language-store";
 import { useInvoiceStore } from "@/store/invoice-store";
 import { toast } from "@/store/toast-store";
 
@@ -99,16 +100,23 @@ export function useShareExport() {
     if (typeof navigator.share !== "function" || typeof navigator.canShare !== "function") return;
 
     let timer: number | undefined;
-    const prewarm = () => void getInvoicePdfFile(toInvoiceDocument(useInvoiceStore.getState().invoice)).catch(() => undefined);
-    const unsubscribe = useInvoiceStore.subscribe((current, previous) => {
-      if (current.invoice === previous.invoice) return;
+    const prewarm = () => void getInvoicePdfFile(getCurrentInvoiceDocument()).catch(() => undefined);
+    const schedule = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(prewarm, PREWARM_DELAY_MS);
+    };
+    const unsubscribeInvoice = useInvoiceStore.subscribe((current, previous) => {
+      if (current.invoice !== previous.invoice) schedule();
     });
-    timer = window.setTimeout(prewarm, PREWARM_DELAY_MS);
+    // A language switch changes the document too, so the pre-built file is rebuilt in the new language.
+    const unsubscribeLanguage = useInvoiceLanguageStore.subscribe((current, previous) => {
+      if (current.language !== previous.language) schedule();
+    });
+    schedule();
 
     return () => {
-      unsubscribe();
+      unsubscribeInvoice();
+      unsubscribeLanguage();
       window.clearTimeout(timer);
     };
   }, []);
@@ -117,7 +125,7 @@ export function useShareExport() {
     runRef.current += 1;
     sessionRef.current += 1;
     releasePreviews();
-    const document = toInvoiceDocument(useInvoiceStore.getState().invoice);
+    const document = getCurrentInvoiceDocument();
     documentRef.current = document;
     setState({ ...initialState(readSavedFormat()), phase: "choose" });
     // Start laying out while the user picks a format; both formats need it.

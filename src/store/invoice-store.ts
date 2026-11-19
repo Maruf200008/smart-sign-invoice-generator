@@ -37,7 +37,7 @@ interface InvoiceStore {
   redoLastChange: () => void;
 }
 
-/** Rows an invoice can have. Rows are laid out 12 per A4 page; row 13 onwards continues on the next page. */
+/** Rows an invoice can have. Rows are laid out 15 per A4 page; row 16 onwards continues on the next page. */
 export const MAX_INVOICE_ITEMS = MAX_STORED_ITEMS;
 const MAX_UNDO_HISTORY = 100;
 const UNDO_GROUP_MS = 1200;
@@ -49,7 +49,7 @@ function touch(invoice: InvoiceData): InvoiceData {
   return { ...invoice, updatedAt: new Date().toISOString() };
 }
 
-/** Every invoice opened in the editor has at least 12 rows (one full page), even ones saved with fewer. */
+/** Every invoice opened in the editor has at least 15 rows (one full page), even ones saved with fewer. */
 function withRows(invoice: InvoiceData): InvoiceData {
   const items = withMinimumRows(invoice.items);
   return items === invoice.items ? invoice : { ...invoice, items };

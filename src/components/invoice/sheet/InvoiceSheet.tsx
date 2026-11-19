@@ -107,7 +107,18 @@ export interface InvoicePage {
  * the share page and the PDF source; each `[data-invoice-sheet]` is one printed / PDF page. `printable` marks the
  * pages that Ctrl+P prints.
  */
-export function InvoicePages({ pages, ariaLabel, printable = false }: { pages: InvoicePage[]; ariaLabel?: string; printable?: boolean }) {
+export function InvoicePages({
+  pages,
+  ariaLabel,
+  printable = false,
+  pageAriaLabel = (title, page, pageCount) => `${title}, page ${page} of ${pageCount}`
+}: {
+  pages: InvoicePage[];
+  ariaLabel?: string;
+  printable?: boolean;
+  /** Screen-reader name of one page of several, in the invoice's language. */
+  pageAriaLabel?: (title: string, page: number, pageCount: number) => string;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
   const [layout, setLayout] = useState<SheetLayout>(INITIAL_LAYOUT);
@@ -163,7 +174,7 @@ export function InvoicePages({ pages, ariaLabel, printable = false }: { pages: I
           <div
             key={page.key}
             role="document"
-            aria-label={pageCount > 1 ? `${ariaLabel ?? "Invoice"}, page ${index + 1} of ${pageCount}` : ariaLabel}
+            aria-label={pageCount > 1 ? pageAriaLabel(ariaLabel ?? "Invoice", index + 1, pageCount) : ariaLabel}
             data-invoice-sheet=""
             data-page-number={index + 1}
             data-last-page={index === pageCount - 1 ? "" : undefined}

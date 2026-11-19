@@ -7,18 +7,16 @@ import smartSignLogo from "@/assets/smart_sign_logo.svg";
 import { ITEM_COLUMN_WIDTHS, sheetClasses } from "@/components/invoice/sheet/sheet-styles";
 import { cn } from "@/lib/cn";
 import { invoiceContactLines } from "@/lib/invoice-contact";
-import type { getInvoiceLabels } from "@/lib/invoice-labels";
-
-type Labels = ReturnType<typeof getInvoiceLabels>;
+import type { InvoiceLabels as Labels } from "@/lib/invoice-labels";
 
 const contactIcons = { user: User, phone: Phone, mail: Mail, pin: MapPin } as const;
 
 /** Full-width dark banner with the logo bottom-right. */
-export function SheetBanner() {
+export function SheetBanner({ labels }: { labels: Labels }) {
   return (
     <div className={sheetClasses.banner}>
       <div className={sheetClasses.bannerInner}>
-        <Image src={smartSignLogo} alt="Smart Sign Color Lab" priority unoptimized className={sheetClasses.logo} />
+        <Image src={smartSignLogo} alt={labels.logoAlt} priority unoptimized className={sheetClasses.logo} />
       </div>
     </div>
   );
@@ -89,7 +87,7 @@ export function SheetItemsTable({ labels, children, caption }: { labels: Labels;
 }
 
 /**
- * One page's item rows (at most 12, see pagination.ts). Rows keep their own keys, so editing focus is kept while a
+ * One page's item rows (at most 15, see pagination.ts). Rows keep their own keys, so editing focus is kept while a
  * row stays on the same page.
  */
 export function SheetRows({ rows }: { rows: { key: string; node: ReactNode }[] }) {
@@ -103,9 +101,10 @@ export function SheetRows({ rows }: { rows: { key: string; node: ReactNode }[] }
 }
 
 /**
- * Everything after the table, in the original order: the totals box (right), the Remaining pill (right), then the
- * signature and contact footer pinned to the bottom of the page. Rendered on the last page only; earlier pages
- * get the footer alone (`SheetPageFooter`).
+ * Everything after the table, in two columns: the totals box and the Remaining pill on the right; the remaining
+ * amount in words with the signature and contact footer directly beneath it on the left (not pinned to the page
+ * bottom, so the space below is free). Rendered on the last page only; earlier pages get the footer alone
+ * (`SheetPageFooter`).
  */
 export function SheetTail({
   labels,
@@ -117,7 +116,7 @@ export function SheetTail({
   labels: Labels;
   summary: ReactNode;
   remaining: ReactNode;
-  /** Grand total in words ("... Taka Only."), shown left of the totals box. */
+  /** Remaining amount in words ("... Taka Only."), shown left of the totals box. */
   amountInWords?: string;
   beforeSummary?: ReactNode;
 }) {
@@ -130,20 +129,22 @@ export function SheetTail({
         </div>
       )}
       <section data-sheet-tail-part="" className={sheetClasses.summarySection}>
-        {amountInWords && (
-          <div className={sheetClasses.inWords} data-amount-in-words="">
-            <span className={sheetClasses.inWordsLabel}>{labels.inWords}</span>
-            <p className={sheetClasses.inWordsText} aria-live="polite">
-              {amountInWords}
-            </p>
-          </div>
-        )}
-        <div className={sheetClasses.summaryBox}>{summary}</div>
+        <div className={sheetClasses.summaryMain}>
+          {amountInWords && (
+            <div className={sheetClasses.inWords} data-amount-in-words="">
+              <span className={sheetClasses.inWordsLabel}>{labels.inWords}</span>
+              <p className={sheetClasses.inWordsText} aria-live="polite">
+                {amountInWords}
+              </p>
+            </div>
+          )}
+          <SheetFooter labels={labels} inline />
+        </div>
+        <div className={sheetClasses.summaryAside}>
+          <div className={sheetClasses.summaryBox}>{summary}</div>
+          {remaining}
+        </div>
       </section>
-      <section data-sheet-tail-part="" className={sheetClasses.remainingSection}>
-        {remaining}
-      </section>
-      <SheetFooter labels={labels} />
     </div>
   );
 }
@@ -201,13 +202,13 @@ export function SheetPageFooter({ labels }: { labels: Labels }) {
 }
 
 /** Signature line, then the company contact list underneath it (left-aligned), as in the original layout. */
-export function SheetFooter({ labels }: { labels: Labels }) {
+export function SheetFooter({ labels, inline = false }: { labels: Labels; inline?: boolean }) {
   return (
-    <footer data-sheet-tail-part="" className={sheetClasses.footer}>
+    <footer data-sheet-tail-part="" className={inline ? sheetClasses.footerInline : sheetClasses.footer}>
       <p className={sheetClasses.signatureLabel}>{labels.signature}</p>
       <div className={sheetClasses.signatureLine} />
       <ul className={sheetClasses.contactList}>
-        {invoiceContactLines.map(({ kind, text }) => {
+        {invoiceContactLines(labels).map(({ kind, text }) => {
           const Icon = contactIcons[kind];
 
           return (

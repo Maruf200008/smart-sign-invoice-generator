@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { InvoiceDocument } from "@/components/invoice/InvoiceDocument";
 import { BUNDLED_FONT_FAMILIES, FONT_WARMUP_TEXT } from "@/lib/fonts/font-registry";
 import type { InvoiceDocumentData } from "@/lib/invoice-document";
+import { getInvoiceLabels } from "@/lib/invoice-labels";
 import { PAGE_WIDTH_PX, sheetPageHeightPx } from "@/lib/invoice-sheet/sheet-metrics";
 import { type CapturedPage, capturedPagesToPdf, captureDomPages } from "@/lib/pdf/dom-to-pdf";
 import { TextShaper } from "@/lib/pdf/text-shaper";
@@ -44,7 +45,7 @@ async function loadScreenFonts() {
 const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 /**
- * Lays the invoice out off-screen at its exact print size — A4 pages, 12 rows per page, footer on every page, totals
+ * Lays the invoice out off-screen at its exact print size — A4 pages, 15 rows per page, footer on every page, totals
  * on the last page — and records every page once. The capture feeds both the PDF and the JPEG export. Browser-only.
  */
 export async function captureInvoicePages(data: InvoiceDocumentData): Promise<CapturedPage[]> {
@@ -75,7 +76,7 @@ export async function captureInvoicePages(data: InvoiceDocumentData): Promise<Ca
     const sheets = Array.from(host.querySelectorAll<HTMLElement>("[data-invoice-sheet]"));
     if (sheets.length === 0) throw new Error("Invoice layout is missing.");
 
-    // One page per A4 sheet (12 rows each). A page is exactly as tall as its laid-out sheet: A4, or taller
+    // One page per A4 sheet (15 rows each). A page is exactly as tall as its laid-out sheet: A4, or taller
     // only when its content can't fit A4, so nothing is ever clipped.
     const pages = sheets.map((element) => ({ element, heightPx: sheetPageHeightPx(element.getBoundingClientRect().height) }));
 
@@ -86,12 +87,13 @@ export async function captureInvoicePages(data: InvoiceDocumentData): Promise<Ca
   }
 }
 
-/** Writes captured invoice pages as a vector PDF. */
-export function invoicePagesToPdf(pages: CapturedPage[], meta: { title: string }): Uint8Array {
-  return capturedPagesToPdf(pages, { title: meta.title, subject: "Invoice", lang: "en" });
+/** Writes captured invoice pages as a vector PDF; the metadata (subject, language) follows the invoice language. */
+export function invoicePagesToPdf(pages: CapturedPage[], meta: { title: string; language?: InvoiceDocumentData["language"] }): Uint8Array {
+  const labels = getInvoiceLabels(meta.language);
+  return capturedPagesToPdf(pages, { title: meta.title, subject: labels.invoice, lang: labels.htmlLang });
 }
 
 /** Renders the invoice to a PDF of A4 pages. Browser-only. */
 export async function createInvoicePdfBytes(data: InvoiceDocumentData, meta: { title: string }): Promise<Uint8Array> {
-  return invoicePagesToPdf(await captureInvoicePages(data), meta);
+  return invoicePagesToPdf(await captureInvoicePages(data), { language: data.language, ...meta });
 }

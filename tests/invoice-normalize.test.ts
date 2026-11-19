@@ -12,12 +12,12 @@ describe("sanitizeInvoiceData", () => {
 
     expect(clean.customer.name).toBe("রহিম আহমেদ");
     expect(clean.items[0]).toMatchObject({ name: "Banner", sqf: 8, total: 400 });
-    expect(clean.items).toHaveLength(12);
+    expect(clean.items).toHaveLength(15);
   });
 
-  it("starts every new invoice with 12 blank rows", () => {
+  it("starts every new invoice with 15 blank rows", () => {
     const invoice = createSampleInvoice();
-    expect(invoice.items).toHaveLength(12);
+    expect(invoice.items).toHaveLength(15);
     expect(invoice.items.every((item) => !item.name && !item.quantity && !item.total)).toBe(true);
   });
 

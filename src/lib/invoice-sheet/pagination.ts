@@ -3,7 +3,7 @@
  * across pages (page 2 starts at 13). Every page carries the signature and contact footer; only the last page
  * carries the totals.
  */
-export const ROWS_PER_PAGE = 12;
+export const ROWS_PER_PAGE = 15;
 
 export interface InvoicePageRange {
   /** Zero-based page index. */

@@ -124,7 +124,7 @@ describe("cell and row operations", () => {
     expect(cleared[1]).toMatchObject({ id: items[1].id, name: "", total: 0 });
     const deleted = deleteRows(items, 0, 1);
     expect(deleted[0].name).toBe("C");
-    expect(deleted).toHaveLength(12);
+    expect(deleted).toHaveLength(15);
   });
 });
 
@@ -158,5 +158,18 @@ describe("store undo / redo for grid edits", () => {
     expect(toInvoiceDocument(store().invoice).amountInWords).toBe("One Thousand Two Hundred Fifty One Taka Only.");
     store().updateItem(first.id, { total: 1250 });
     expect(toInvoiceDocument(store().invoice).amountInWords).toBe("One Thousand Two Hundred Fifty Taka Only.");
+  });
+
+  it("puts the remaining amount (grand total − advance) in words, matching the Remaining badge", () => {
+    const store = useInvoiceStore.getState;
+    const [first] = store().invoice.items;
+    store().updateItem(first.id, { quantity: 1, unitPrice: 30150 });
+    store().updateInvoice({ advance: 4000 });
+    const document = toInvoiceDocument(store().invoice);
+    expect(document.totals.remaining).toBe(26150);
+    expect(document.amountInWords).toBe("Twenty Six Thousand One Hundred Fifty Taka Only.");
+
+    store().updateInvoice({ advance: 30150 });
+    expect(toInvoiceDocument(store().invoice).amountInWords).toBe("Zero Taka Only.");
   });
 });
